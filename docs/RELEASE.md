@@ -33,12 +33,35 @@ powershell -ExecutionPolicy Bypass -File .\scripts\publish.ps1 `
 输出包含版本 ZIP、`SHA256SUMS` 和 `RELEASE-NOTES.md`。若签名环境已配置，脚本要求引擎
 Authenticode 状态为 `Valid`；否则立即失败。FFmpeg 第三方二进制默认不由 Luma 重新签名。
 
-## 3. 人工放行与上传
+## 3. 创建 GitHub Draft Release
+
+安装并认证 GitHub CLI，或只在当前进程设置具有 `repo` 权限的 token。Token 不写入脚本或日志：
+
+```powershell
+gh auth login
+# 或：$env:GH_TOKEN='token from a secure secret store'
+
+powershell -ExecutionPolicy Bypass -File .\scripts\publish.ps1 -SkipFfplay
+powershell -ExecutionPolicy Bypass -File .\scripts\github-release.ps1 -SkipBuild -Draft:`$true
+```
+
+脚本在上传前重新计算 ZIP SHA-256，并要求 `SHA256SUMS` 完全一致。默认创建 Draft；人工六项
+未完成前应保持 Draft。已有正式 Release 永不覆盖；已有草稿也会失败，只有显式
+`-ReplaceDraft` 才删除并重建该草稿。先检查而不创建：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\github-release.ps1 `
+  -Version 5920ec4 -SkipBuild -DryRun
+```
+
+无证书的 Draft 允许上传，但正文会醒目标记 `Unsigned` 和 SmartScreen 预期。默认附件为 ZIP
+与 `SHA256SUMS`；本地矩阵只写摘要和路径说明，不会上传可能包含机器信息的日志。
+
+## 4. 人工放行与发布
 
 完成并保存人工清单，重新用 `-RequireManualPass` 运行矩阵，然后核对：
 
 1. `SHA256SUMS` 与 ZIP 一致；
 2. 发布说明中的 Signed/Unsigned 与 `Get-AuthenticodeSignature` 一致；
 3. GPL/OBS/FFmpeg 许可证和源码位置仍在包中；
-4. 手工将 ZIP、校验和及发布说明上传到 GitHub Releases。
-
+4. 在 GitHub 网页检查 Draft 的正文、附件和人工清单，再手工点击 Publish。

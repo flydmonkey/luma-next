@@ -180,6 +180,7 @@ curl.exe -X DELETE http://127.0.0.1:18765/api/v1/library/luma-123.mkv
 - [M7 原生区域框选与游戏捕获](docs/M7.md)
 - [M8 纯音频、游戏靶与发行冒烟](docs/M8.md)
 - [发行 Runbook](docs/RELEASE.md) 与 [Windows 签名](docs/SIGNING.md)
+- GitHub Draft 上传：`scripts/github-release.ps1`（默认不覆盖已有 Release）
 - [录制计时口径](docs/TIMING.md)
 - [Windows 托盘](docs/TRAY.md)
 - [安装与发布](docs/INSTALL.md)
