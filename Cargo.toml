@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/luma-engine", "crates/luma-shell"]
+members = ["crates/luma-engine"]
 resolver = "2"
 
 [workspace.package]
