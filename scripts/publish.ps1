@@ -38,3 +38,4 @@ $notes=@"
 $notes | Set-Content -LiteralPath (Join-Path $OutDir 'RELEASE-NOTES.md') -Encoding utf8
 Write-Host "[publish] PASS: $zip" -ForegroundColor Green
 Write-Host "[publish] Authenticode: $status; SHA256SUMS written. Review RELEASE-NOTES.md, then upload manually to GitHub Releases."
+Write-Host "[publish] Next: powershell -ExecutionPolicy Bypass -File .\scripts\github-release.ps1 -Version '$Version' -SkipBuild -Draft:`$true"
