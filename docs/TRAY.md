@@ -58,6 +58,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\uninstall.ps1
 `--no-tray` 或 `--open-ui`。因此用户登录后启动正常托盘，但不会自动弹浏览器。
 直接对 `target\debug` 或 `target\release` 中的开发 exe 执行 `--install-autostart` 仍允许，
 但引擎会警告该路径不稳定。卸载只删除 `LumaNext` 值，不删除整个 Run 键。
+正式安装的 `bin\` 同时包含 ffmpeg/ffprobe/ffplay，托盘 stop 校验不依赖系统 PATH。
 
 源码开发与已安装实例共用产品单例。调试前应从托盘退出已安装实例；需要并行时使用
 `--allow-second-instance --no-tray --port <独立端口>`。完整布局见 [INSTALL.md](INSTALL.md)。

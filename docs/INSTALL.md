@@ -21,6 +21,9 @@ x64 zip。`-NoZip` 仅组装目录。`dist/` 是生成物，不进入 Git。
 LumaNext/
   bin/
     luma-engine.exe
+    ffmpeg.exe
+    ffprobe.exe
+    ffplay.exe
     obs.dll、FFmpeg/Qt-free 运行 DLL 与 obs-ffmpeg-mux.exe
   obs/
     data/
@@ -28,10 +31,23 @@ LumaNext/
   manifest.json
   README.txt
   LICENSE-OBS-GPL.txt
+  LICENSE-FFMPEG.txt
 ```
 
 引擎从 `bin` 上一级自动发现 `obs`。运行时设置 `LUMA_OBS_RUNDIR` 可显式覆盖；源码
 开发则回落到编译时 rundir。包不包含 obs-studio 源码树。
+
+FFmpeg 命令行工具固定使用 Gyan.dev 的 Windows x64 essentials build 9.0.2。该提供方由
+FFmpeg 官方下载页列为 Windows 二进制来源。脚本下载
+`ffmpeg-9.0.2-essentials_build.zip` 到未入库的 `third_party\ffmpeg\cache`，并验证
+SHA-256 `60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba` 后才解包。
+正式包包含该构建提供的 `ffmpeg.exe`、`ffprobe.exe` 和 `ffplay.exe`；三个静态工具合计
+约 303 MiB，ZIP 相比仅 OBS 包约增加 112 MiB。OBS 自带的 avcodec DLL 不能替代这些
+命令行工具。
+
+引擎查找 ffprobe 的顺序是 `LUMA_FFPROBE`、引擎同目录、安装根下
+`ffmpeg\bin`，最后才是 PATH。预留的 ffmpeg 解析规则同理使用 `LUMA_FFMPEG`；目前
+录制主路径只直接调用 ffprobe，ffmpeg/ffplay 用于后续转码、抽帧和人工诊断。
 
 ## 安装、升级与卸载
 
@@ -73,6 +89,8 @@ cargo run -p luma-engine -- --allow-second-instance --no-tray --port 18766
 
 ## GPL 与发布责任
 
-发布目录包含并链接 libobs 及其插件，整体分发必须履行 GPL 源码提供、许可证声明等
-义务。包内 `LICENSE-OBS-GPL.txt` 保留 OBS 许可证，`README.txt` 给出 Luma Next 与 OBS
-对应源码位置。代码签名、SmartScreen 商业信誉与 MSI/MSIX 不在第一期范围内。
+发布目录包含并链接 libobs 及其插件，并捆绑 Gyan.dev 的 GPLv3 FFmpeg essentials
+静态构建。整体分发必须履行相应 GPL 源码提供、许可证声明等义务。包内
+`LICENSE-OBS-GPL.txt` 与 `LICENSE-FFMPEG.txt` 保留两者许可证，`README.txt` 给出
+Luma Next、OBS 与 FFmpeg 对应源码位置。代码签名、SmartScreen 商业信誉与 MSI/MSIX
+不在第一期范围内。

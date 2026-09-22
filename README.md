@@ -44,7 +44,7 @@ luma-next/
 - Rust toolchain（stable）
 - 本机 OBS RelWithDebInfo 构建（默认读取
   `C:\Users\Administrator\Projects\obs-studio\build_x64\rundir\RelWithDebInfo`）
-- `ffprobe.exe` 在 `PATH` 中，用于 stop 后强制校验音视频流与时长
+- 源码开发时可使用 `PATH` 中的 FFmpeg；正式包已捆绑 `ffmpeg`、`ffprobe`、`ffplay`
 
 ## 快速开始
 
@@ -71,7 +71,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\uninstall.ps1
 ```
 
 安装后入口固定为 `%LOCALAPPDATA%\LumaNext\bin\luma-engine.exe`，OBS 运行时位于同一
-安装根下的 `obs\`，无需设置 `LUMA_OBS_RUNDIR`。详见 [安装与发布](docs/INSTALL.md)。
+安装根下的 `obs\`；FFmpeg 命令行工具与引擎同在 `bin\`。无需设置
+`LUMA_OBS_RUNDIR`，也不依赖系统 FFmpeg/PATH。详见 [安装与发布](docs/INSTALL.md)。
 
 最小录制闭环：
 
@@ -94,7 +95,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\record-regression.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\record-regression.ps1 -Encoder amf -RequireHw
 ```
 
-脚本再次用 ffprobe 独立检查音视频流、分辨率、文件大小以及媒体/墙钟时长。硬案例建议
+脚本优先使用已安装包或 `dist` 中的 ffprobe，再回退 PATH，并独立检查音视频流、分辨率、文件大小以及媒体/墙钟时长。硬案例建议
 先在 Chrome 播放一段动态且有声音的视频，再运行脚本。
 
 ## 托盘与无界面运行
