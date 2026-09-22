@@ -31,7 +31,7 @@ if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -F
 New-Item -ItemType Directory -Path $stage | Out-Null
 Copy-Item -Path (Join-Path $PackagePath '*') -Destination $stage -Recurse -Force
 New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
-$managedNames = @('bin', 'obs', 'README.txt', 'manifest.json', 'LICENSE-OBS-GPL.txt')
+$managedNames = @('bin', 'obs', 'README.txt', 'manifest.json', 'LICENSE-OBS-GPL.txt', 'LICENSE-FFMPEG.txt')
 foreach ($name in $managedNames) {
     $destination = Join-Path $installRoot $name
     if (Test-Path -LiteralPath $destination) { Remove-Item -LiteralPath $destination -Recurse -Force }

@@ -17,7 +17,7 @@ if (Test-Path -LiteralPath $installRoot) {
     $resolved = [System.IO.Path]::GetFullPath($installRoot)
     $expected = [System.IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'LumaNext'))
     if ($resolved -ne $expected) { throw "Refusing to modify unexpected path: $resolved" }
-    foreach ($name in @('bin', 'obs', 'README.txt', 'manifest.json', 'LICENSE-OBS-GPL.txt', 'LumaNext.installing')) {
+    foreach ($name in @('bin', 'obs', 'README.txt', 'manifest.json', 'LICENSE-OBS-GPL.txt', 'LICENSE-FFMPEG.txt', 'LumaNext.installing')) {
         $managedPath = Join-Path $resolved $name
         if (Test-Path -LiteralPath $managedPath) { Remove-Item -LiteralPath $managedPath -Recurse -Force }
     }

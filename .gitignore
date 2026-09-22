@@ -1,5 +1,6 @@
 /target/
 /dist/
+/third_party/ffmpeg/cache/
 **/*.rs.bk
 .idea/
 .vscode/

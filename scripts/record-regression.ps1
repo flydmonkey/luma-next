@@ -9,6 +9,18 @@ $ErrorActionPreference = 'Stop'
 $baseUrl = 'http://127.0.0.1:18765'
 $engineProcess = $null
 $recording = $false
+$repository = Split-Path $PSScriptRoot
+
+function Resolve-Ffprobe {
+    if ($env:LUMA_FFPROBE) { return $env:LUMA_FFPROBE }
+    $installed = Join-Path $env:LOCALAPPDATA 'LumaNext\bin\ffprobe.exe'
+    if (Test-Path -LiteralPath $installed -PathType Leaf) { return $installed }
+    $packaged = Join-Path $repository 'dist\LumaNext\bin\ffprobe.exe'
+    if (Test-Path -LiteralPath $packaged -PathType Leaf) { return $packaged }
+    return 'ffprobe.exe'
+}
+
+$ffprobe = Resolve-Ffprobe
 
 function Invoke-LumaApi([string]$Path, [string]$Method = 'GET', [object]$Body = $null) {
     $parameters = @{ Uri = "$baseUrl$Path"; Method = $Method; UseBasicParsing = $true }
@@ -38,7 +50,7 @@ function Invoke-RecordingCase([string]$EncoderId, [string]$Label, [bool]$Hardwar
     $wallSeconds = ((Get-Date)-$startedAt).TotalSeconds
     $outputPath = $stop.output_path
     if (-not (Test-Path -LiteralPath $outputPath -PathType Leaf)) { throw "Output file does not exist: $outputPath" }
-    $probeJson = & ffprobe.exe -v error -show_entries 'stream=codec_type,codec_name,width,height:format=duration,size' -of json -- $outputPath
+    $probeJson = & $ffprobe -v error -show_entries 'stream=codec_type,codec_name,width,height:format=duration,size' -of json -- $outputPath
     if ($LASTEXITCODE -ne 0) { throw "ffprobe rejected $outputPath" }
     $probe = $probeJson | ConvertFrom-Json
     $video = @($probe.streams | Where-Object codec_type -eq 'video') | Select-Object -First 1
@@ -56,7 +68,6 @@ function Invoke-RecordingCase([string]$EncoderId, [string]$Label, [bool]$Hardwar
 try {
     try { $null=Invoke-LumaApi '/api/v1' } catch {
         if ($EngineAlreadyRunning) { throw 'Luma engine is not reachable on 127.0.0.1:18765.' }
-        $repository=Split-Path $PSScriptRoot
         & cargo.exe build -p luma-engine
         if ($LASTEXITCODE -ne 0) { throw 'cargo build -p luma-engine failed.' }
         $enginePath=Join-Path $repository 'target\debug\luma-engine.exe'; $temp=[System.IO.Path]::GetTempPath()
