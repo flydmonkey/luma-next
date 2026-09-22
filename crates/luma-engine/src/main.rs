@@ -15,6 +15,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage, WM_QUIT,
 };
 
+mod windows_host;
+
 #[derive(Debug, Parser)]
 #[command(name = "luma-engine", about = "Luma Next local HTTP engine")]
 struct Args {
@@ -29,11 +31,63 @@ struct Args {
         help = "Open the control page in the default browser after startup"
     )]
     open_ui: bool,
+    #[arg(
+        long,
+        help = "Allow another engine instance for isolated development ports"
+    )]
+    allow_second_instance: bool,
+    #[arg(
+        long,
+        conflicts_with = "uninstall_autostart",
+        help = "Install per-user Windows logon autostart for this executable"
+    )]
+    install_autostart: bool,
+    #[arg(
+        long,
+        conflicts_with = "install_autostart",
+        help = "Remove the per-user Windows logon autostart entry"
+    )]
+    uninstall_autostart: bool,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    if args.install_autostart {
+        let executable = std::env::current_exe()?;
+        let command = windows_host::install_autostart(&executable)
+            .map_err(|error| format!("安装开机启动失败：{error}"))?;
+        println!(
+            "已安装当前用户开机启动：HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\LumaNext"
+        );
+        println!("命令：{command}");
+        return Ok(());
+    }
+    if args.uninstall_autostart {
+        let removed = windows_host::uninstall_autostart()
+            .map_err(|error| format!("卸载开机启动失败：{error}"))?;
+        println!(
+            "{}",
+            if removed {
+                "已移除当前用户开机启动。"
+            } else {
+                "开机启动项原本就不存在。"
+            }
+        );
+        return Ok(());
+    }
+
+    let _instance_guard = if args.allow_second_instance {
+        None
+    } else {
+        match windows_host::acquire_single_instance()? {
+            windows_host::InstanceGuard::Acquired(guard) => Some(guard),
+            windows_host::InstanceGuard::AlreadyRunning => {
+                eprintln!("Luma Next 已在当前 Windows 会话中运行；本次启动已取消。");
+                std::process::exit(2);
+            }
+        }
+    };
     eprintln!(
         "Initializing embedded libobs from {}",
         env!("LUMA_OBS_RUNDIR")
