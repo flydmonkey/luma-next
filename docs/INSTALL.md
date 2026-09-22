@@ -102,3 +102,5 @@ Luma Next、OBS 与 FFmpeg 对应源码位置。M8 提供可选 Authenticode 挂
 3. 执行 `scripts/release-smoke.ps1`，验证安装、HKCU Run、旁路 ffprobe、录音 start/stop 和卸载。
 4. 执行 `scripts/record-regression.ps1`，确认 audio-only 与仓内 DX11 game_capture 探针均 PASS。
 5. 发布前另在真实游戏、麦克风和目标 DPI/多屏环境手测。
+
+完整顺序与报告格式见 [RELEASE.md](RELEASE.md)，证书配置及故障排查见 [SIGNING.md](SIGNING.md)。
