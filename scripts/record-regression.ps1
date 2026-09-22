@@ -4,6 +4,7 @@ param(
     [ValidateSet('auto', 'x264', 'amf')][string]$Encoder = 'auto',
     [switch]$RequireHw,
     [switch]$SkipMicrophone,
+    [switch]$SkipM6,
     [string]$WindowTitleSubstring,
     [switch]$EngineAlreadyRunning
 )
@@ -32,17 +33,28 @@ function Invoke-LumaApi([string]$Path, [string]$Method = 'GET', [object]$Body = 
     return $response.data
 }
 
-function Invoke-RecordingCase([string]$EncoderId, [string]$Label, [bool]$Hardware, [string]$Mode = 'display', [string]$WindowId = '', [bool]$SystemAudio = $true, [bool]$Microphone = $false) {
+function Invoke-RecordingCase([string]$EncoderId, [string]$Label, [bool]$Hardware, [string]$Mode = 'display', [string]$WindowId = '', [bool]$SystemAudio = $true, [bool]$Microphone = $false, [string]$DisplayId = 'primary', [hashtable]$Region = $null, [int]$PauseSeconds = 0) {
     Write-Host "[$Label] Starting a $Seconds-second recording with $EncoderId."
     $startedAt = Get-Date
     $script:recording = $true
-    $start = Invoke-LumaApi '/api/v1/session/start' 'POST' @{ mode=$Mode; window_id=$(if($WindowId){$WindowId}else{$null}); system_audio=$SystemAudio; microphone=$Microphone; mic_device_id='default'; quality='1080p30'; encoder=$EncoderId }
+    $start = Invoke-LumaApi '/api/v1/session/start' 'POST' @{ mode=$Mode; display_id=$DisplayId; region=$Region; window_id=$(if($WindowId){$WindowId}else{$null}); system_audio=$SystemAudio; microphone=$Microphone; mic_device_id='default'; quality='1080p30'; encoder=$EncoderId }
     Write-Host "[$Label] requested=$($start.encoder_requested) active=$($start.encoder_active) fallback=$($start.encoder_fallback)"
     if ($start.encoder_fallback) {
         Write-Warning "[$Label] fallback reason: $($start.fallback_reason)"
         if ($Hardware -and $RequireHw) { throw "Hardware encoder was required but fell back to $($start.encoder_active)." }
     }
-    foreach ($remaining in $Seconds..1) {
+    $activeSeconds = $Seconds
+    if ($PauseSeconds -gt 0) {
+        Start-Sleep -Seconds 5
+        $beforePause = [double](Invoke-LumaApi '/api/v1/session').media_elapsed_seconds
+        $paused = Invoke-LumaApi '/api/v1/session/pause' 'POST'
+        Start-Sleep -Seconds $PauseSeconds
+        $duringPause = [double](Invoke-LumaApi '/api/v1/session').media_elapsed_seconds
+        if ($paused.state -ne 'paused' -or [Math]::Abs($duringPause-$beforePause) -gt 0.5) { throw "Pause clock did not freeze: before=$beforePause during=$duringPause." }
+        $null = Invoke-LumaApi '/api/v1/session/resume' 'POST'
+        $activeSeconds = [Math]::Max(1,$Seconds-5)
+    }
+    foreach ($remaining in $activeSeconds..1) {
         Write-Progress -Activity "Luma $Label regression" -Status "$remaining seconds remaining" -PercentComplete ((($Seconds-$remaining)/$Seconds)*100)
         Start-Sleep -Seconds 1
     }
@@ -59,11 +71,13 @@ function Invoke-RecordingCase([string]$EncoderId, [string]$Label, [bool]$Hardwar
     $video = @($probe.streams | Where-Object codec_type -eq 'video') | Select-Object -First 1
     $audio = @($probe.streams | Where-Object codec_type -eq 'audio') | Select-Object -First 1
     $mediaSeconds = [double]$probe.format.duration; $sizeBytes = [long]$probe.format.size
-    $tolerance = [Math]::Max(2.5,$wallSeconds*0.005)
+    $expectedWall = $wallSeconds-$PauseSeconds
+    $tolerance = [Math]::Max(2.5,$expectedWall*0.005)
     if ($null -eq $video -or $null -eq $audio) { throw 'ffprobe did not find both video and audio streams.' }
-    if ($video.width -lt 640 -or $video.height -lt 360) { throw "Implausible resolution $($video.width)x$($video.height)." }
+    if ($Mode -eq 'region') { if ($video.width -ne $Region.width -or $video.height -ne $Region.height) { throw "Region resolution mismatch: expected $($Region.width)x$($Region.height), got $($video.width)x$($video.height)." } }
+    elseif ($video.width -lt 640 -or $video.height -lt 360) { throw "Implausible resolution $($video.width)x$($video.height)." }
     if ($sizeBytes -lt 102400) { throw "Output is suspiciously small: $sizeBytes bytes." }
-    if ($mediaSeconds -lt 1 -or [Math]::Abs($mediaSeconds-$wallSeconds) -gt $tolerance) { throw "Duration mismatch: media=$mediaSeconds wall=$wallSeconds tolerance=$tolerance." }
+    if ($mediaSeconds -lt 1 -or [Math]::Abs($mediaSeconds-$expectedWall) -gt $tolerance) { throw "Duration mismatch: media=$mediaSeconds active-wall=$expectedWall tolerance=$tolerance." }
     $obsMedia=[double]$stop.media_elapsed_seconds; $uiMedia=[double]$stop.elapsed_seconds; $liveMedia=[double]$live.media_elapsed_seconds
     if([Math]::Abs($obsMedia-$mediaSeconds) -ge 1.5){throw "OBS media/ffprobe mismatch: obs=$obsMedia ffprobe=$mediaSeconds."}
     if([Math]::Abs($uiMedia-$mediaSeconds) -ge 1.0){throw "Stopped UI timer disagreed with ffprobe: ui=$uiMedia ffprobe=$mediaSeconds."}
@@ -97,6 +111,14 @@ try {
         $window=$windows|Where-Object {$_.available -and $_.title -like "*$WindowTitleSubstring*"}|Select-Object -First 1
         if($null -eq $window){throw "No capturable window title contains '$WindowTitleSubstring'."}
         Invoke-RecordingCase 'obs_x264' 'window' $false 'window' $window.id $true $false
+    }
+    if(-not $SkipM6){
+        $targets=Invoke-LumaApi '/api/v1/targets';$displays=@($targets.displays);$primary=$displays|Where-Object primary|Select-Object -First 1
+        if($null -eq $primary){throw 'No primary display was enumerated for M6 regression.'}
+        $region=@{x=[int]$primary.x+100;y=[int]$primary.y+100;width=640;height=360}
+        Invoke-RecordingCase 'obs_x264' 'region' $false 'region' '' $true $false $primary.id $region
+        Invoke-RecordingCase 'obs_x264' 'pause' $false 'display' '' $true $false $primary.id $null 5
+        if($displays.Count -lt 2){Write-Host '[multi-monitor] SKIP: only one display is connected.' -ForegroundColor Yellow}else{Invoke-RecordingCase 'obs_x264' 'secondary-display' $false 'display' '' $true $false $displays[1].id}
     }
 } catch {
     if($recording){try{$null=Invoke-LumaApi '/api/v1/session/stop' 'POST'}catch{}}
