@@ -1,4 +1,5 @@
 mod recorder;
+mod region_picker;
 mod settings;
 mod tools;
 
@@ -246,6 +247,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/session/stop", post(stop_recording))
         .route("/api/v1/session/pause", post(pause_recording))
         .route("/api/v1/session/resume", post(resume_recording))
+        .route("/api/v1/region/pick", post(pick_region))
         .route("/api/v1/library", get(library))
         .route("/api/v1/library/open", post(open_library))
         .route("/api/v1/library/{id}", delete(delete_library_item))
@@ -307,6 +309,7 @@ async fn encoders(State(state): State<AppState>) -> Response {
 struct Targets {
     displays: Vec<DisplayTarget>,
     windows: Vec<CaptureTarget>,
+    games: Vec<CaptureTarget>,
 }
 async fn targets(State(state): State<AppState>) -> Response {
     let controller = state.lock().expect("controller mutex poisoned");
@@ -319,7 +322,91 @@ async fn targets(State(state): State<AppState>) -> Response {
     success_response(Targets {
         displays: recorder.displays(),
         windows: recorder.windows(),
+        games: recorder.games(),
     })
+}
+
+#[derive(Default, Deserialize)]
+struct RegionPickRequest {
+    display_id: Option<String>,
+}
+
+async fn pick_region(State(state): State<AppState>, body: axum::body::Bytes) -> Response {
+    let request: RegionPickRequest = if body.is_empty() {
+        RegionPickRequest::default()
+    } else {
+        match serde_json::from_slice(&body) {
+            Ok(value) => value,
+            Err(error) => {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    format!("invalid region pick request: {error}"),
+                );
+            }
+        }
+    };
+    let display = {
+        let controller = state.lock().expect("controller mutex poisoned");
+        let Some(recorder) = controller.recorder.as_ref() else {
+            return error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "libobs recorder is not initialized",
+            );
+        };
+        let configured = request
+            .display_id
+            .as_deref()
+            .unwrap_or(&controller.settings.current().display_id);
+        let displays = recorder.displays();
+        if configured == "primary" {
+            displays.into_iter().find(|item| item.primary)
+        } else {
+            displays.into_iter().find(|item| item.id == configured)
+        }
+    };
+    let Some(display) = display else {
+        return error_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "display_id is unavailable",
+        );
+    };
+    let bounds = region_picker::PickBounds {
+        x: display.x,
+        y: display.y,
+        width: display.width,
+        height: display.height,
+    };
+    let picked = match tokio::task::spawn_blocking(move || region_picker::pick(bounds)).await {
+        Ok(Ok(Some(region))) => region,
+        Ok(Ok(None)) => {
+            return error_response(
+                StatusCode::CONFLICT,
+                "region selection was cancelled; settings were not changed",
+            );
+        }
+        Ok(Err(error)) => return error_response(StatusCode::SERVICE_UNAVAILABLE, error),
+        Err(error) => {
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("region picker task failed: {error}"),
+            );
+        }
+    };
+    let region = RegionSettings {
+        x: picked.x,
+        y: picked.y,
+        width: picked.width,
+        height: picked.height,
+    };
+    let mut controller = state.lock().expect("controller mutex poisoned");
+    let mut settings = controller.settings.current().clone();
+    settings.capture_mode = "region".into();
+    settings.display_id = display.id.clone();
+    settings.region = Some(region);
+    if let Err(error) = controller.settings.save(settings) {
+        return error_response(StatusCode::INTERNAL_SERVER_ERROR, error);
+    }
+    success_response(serde_json::json!({"region": region, "display_id": display.id}))
 }
 #[derive(Serialize)]
 struct AudioDevices {
@@ -365,6 +452,7 @@ struct StartRequest {
     quality: Option<String>,
     encoder: Option<String>,
     window_id: Option<String>,
+    game_id: Option<String>,
     mic_device_id: Option<String>,
     display_id: Option<String>,
     region: Option<RegionSettings>,
@@ -405,10 +493,10 @@ fn start_locked(
         .unwrap_or(configured.record_system_audio);
     let microphone = request.microphone.unwrap_or(configured.record_microphone);
     let quality = request.quality.as_deref().unwrap_or(&configured.quality);
-    if !matches!(mode, "display" | "window" | "region") {
+    if !matches!(mode, "display" | "window" | "region" | "game") {
         return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
-            "only display, window, and region capture are implemented".into(),
+            "only display, window, region, and game capture are implemented".into(),
         ));
     }
     if !system_audio && !microphone {
@@ -431,6 +519,7 @@ fn start_locked(
     }
     let requested_encoder = request.encoder.unwrap_or(configured.encoder);
     let window_id = request.window_id.or(configured.window_id);
+    let game_id = request.game_id.or(configured.game_id);
     let display_id = request.display_id.unwrap_or(configured.display_id);
     let region = request.region.or(configured.region);
     let mic_device_id = request.mic_device_id.unwrap_or(configured.mic_device_id);
@@ -464,18 +553,36 @@ fn start_locked(
             ));
         }
     }
+    if mode == "game" {
+        let Some(id) = game_id.as_deref() else {
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "game_id is required for game capture".into(),
+            ));
+        };
+        let listed = controller
+            .recorder
+            .as_ref()
+            .is_some_and(|recorder| recorder.games().iter().any(|item| item.id == id));
+        if !listed {
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "game_id is no longer present in the current game target list".into(),
+            ));
+        }
+    }
     let displays = controller
         .recorder
         .as_ref()
         .map_or_else(Vec::new, ObsRecorder::displays);
-    let display = if mode == "window" {
+    let display = if matches!(mode, "window" | "game") {
         None
     } else if display_id == "primary" {
         displays.iter().find(|item| item.primary)
     } else {
         displays.iter().find(|item| item.id == display_id)
     };
-    if mode != "window" && display.is_none() {
+    if !matches!(mode, "window" | "game") && display.is_none() {
         return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
             "display_id is unavailable".into(),
@@ -531,6 +638,12 @@ fn start_locked(
             .into_iter()
             .find(|item| Some(item.id.as_str()) == window_id.as_deref())
             .map_or_else(|| "窗口".into(), |item| item.title)
+    } else if mode == "game" {
+        recorder
+            .games()
+            .into_iter()
+            .find(|item| Some(item.id.as_str()) == game_id.as_deref())
+            .map_or_else(|| "游戏".into(), |item| item.title)
     } else if mode == "region" {
         let region = region.expect("region checked above");
         format!(
@@ -546,6 +659,7 @@ fn start_locked(
         CaptureOptions {
             mode,
             window_id: window_id.as_deref(),
+            game_id: game_id.as_deref(),
             display,
             region: region.map(|value| {
                 let display = display.expect("region display checked above");
@@ -586,9 +700,15 @@ fn start_locked(
                 .into_iter()
                 .flatten()
                 .collect(),
-                warning: (mode == "window").then_some(
-                    "目标窗口最小化或关闭后画面可能变黑；请停止录制并重新选择窗口".into(),
-                ),
+                warning: match mode {
+                    "window" => {
+                        Some("目标窗口最小化或关闭后画面可能变黑；请停止录制并重新选择窗口".into())
+                    }
+                    "game" => {
+                        Some("游戏关闭、权限级别不一致或切换渲染 API 时，OBS hook 可能中断".into())
+                    }
+                    _ => None,
+                },
                 paused: false,
                 display_id: display.map(|item| item.id.clone()),
                 region,
@@ -800,6 +920,20 @@ async fn put_settings(State(state): State<AppState>, Json(settings): Json<Settin
             return error_response(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "window_id is not in the current target list",
+            );
+        }
+    }
+    if settings.capture_mode == "game" {
+        let valid = settings.game_id.as_deref().is_some_and(|id| {
+            controller
+                .recorder
+                .as_ref()
+                .is_some_and(|recorder| recorder.games().iter().any(|item| item.id == id))
+        });
+        if !valid {
+            return error_response(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "game_id is not in the current game target list",
             );
         }
     }

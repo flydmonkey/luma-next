@@ -23,6 +23,8 @@ pub struct Settings {
     pub region: Option<RegionSettings>,
     #[serde(default)]
     pub window_id: Option<String>,
+    #[serde(default)]
+    pub game_id: Option<String>,
     #[serde(default = "default_mic_device")]
     pub mic_device_id: String,
     pub quality: String,
@@ -44,6 +46,7 @@ impl Settings {
             display_id: default_display_id(),
             region: None,
             window_id: None,
+            game_id: None,
             mic_device_id: default_mic_device(),
             quality: "1080p30".into(),
             encoder: default_encoder(),
@@ -60,8 +63,11 @@ impl Settings {
         if !self.record_system_audio && !self.record_microphone {
             return Err("at least one of system audio or microphone must be enabled".into());
         }
-        if !matches!(self.capture_mode.as_str(), "display" | "window" | "region") {
-            return Err("capture_mode must be display, window, or region".into());
+        if !matches!(
+            self.capture_mode.as_str(),
+            "display" | "window" | "region" | "game"
+        ) {
+            return Err("capture_mode must be display, window, region, or game".into());
         }
         if self.capture_mode == "region" && self.region.is_none() {
             return Err("region is required for region capture".into());
@@ -74,6 +80,9 @@ impl Settings {
         if self.capture_mode == "window" && self.window_id.as_deref().unwrap_or_default().is_empty()
         {
             return Err("window_id is required for window capture".into());
+        }
+        if self.capture_mode == "game" && self.game_id.as_deref().unwrap_or_default().is_empty() {
+            return Err("game_id is required for game capture".into());
         }
         if self.quality != "1080p30" {
             return Err("only quality 1080p30 is currently supported".into());

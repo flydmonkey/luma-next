@@ -138,6 +138,7 @@ pub struct CaptureRegion {
 pub struct CaptureOptions<'a> {
     pub mode: &'a str,
     pub window_id: Option<&'a str>,
+    pub game_id: Option<&'a str>,
     pub display: Option<&'a DisplayTarget>,
     pub region: Option<CaptureRegion>,
     pub system_audio: bool,
@@ -219,6 +220,26 @@ impl ObsRecorder {
 
     pub fn windows(&self) -> Vec<CaptureTarget> {
         self.property_items("window_capture", "window")
+            .into_iter()
+            .map(|(id, label)| {
+                let (executable, title) = label
+                    .strip_prefix('[')
+                    .and_then(|value| value.split_once("]: "))
+                    .unwrap_or(("unknown", label.as_str()));
+                CaptureTarget {
+                    id,
+                    title: title.to_string(),
+                    executable: executable.to_string(),
+                    minimized: false,
+                    available: true,
+                    unavailable_reason: None,
+                }
+            })
+            .collect()
+    }
+
+    pub fn games(&self) -> Vec<CaptureTarget> {
+        self.property_items("game_capture", "window")
             .into_iter()
             .map(|(id, label)| {
                 let (executable, title) = label
@@ -329,6 +350,8 @@ impl ObsRecorder {
         let c_mode = CString::new(capture.mode).map_err(|_| "invalid capture mode".to_string())?;
         let target = if capture.mode == "window" {
             capture.window_id.unwrap_or_default()
+        } else if capture.mode == "game" {
+            capture.game_id.unwrap_or_default()
         } else {
             capture.display.map_or("", |display| display.id.as_str())
         };

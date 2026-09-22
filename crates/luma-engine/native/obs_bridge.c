@@ -11,6 +11,7 @@ struct luma_obs {
     obs_scene_t *scene;
     obs_source_t *monitor;
     obs_source_t *window;
+    obs_source_t *game;
     obs_source_t *desktop_audio;
     obs_source_t *microphone;
     obs_sceneitem_t *visual_item;
@@ -146,13 +147,19 @@ static void release_dynamic_sources(struct luma_obs *ctx)
         obs_source_release(ctx->microphone);
         ctx->microphone = NULL;
     }
-    if (ctx->window) {
+    if (ctx->window || ctx->game) {
         if (ctx->visual_item) {
             obs_sceneitem_remove(ctx->visual_item);
             ctx->visual_item = NULL;
         }
-        obs_source_release(ctx->window);
-        ctx->window = NULL;
+        if (ctx->window) {
+            obs_source_release(ctx->window);
+            ctx->window = NULL;
+        }
+        if (ctx->game) {
+            obs_source_release(ctx->game);
+            ctx->game = NULL;
+        }
         ctx->visual_item = obs_scene_add(ctx->scene, ctx->monitor);
     }
 }
@@ -329,6 +336,27 @@ static bool configure_sources(struct luma_obs *ctx, const char *mode, const char
             release_dynamic_sources(ctx);
             return false;
         }
+    } else if (strcmp(mode, "game") == 0) {
+        obs_data_t *settings = obs_data_create();
+        obs_data_set_string(settings, "capture_mode", "window");
+        obs_data_set_string(settings, "window", target);
+        obs_data_set_int(settings, "priority", 0);
+        obs_data_set_bool(settings, "anti_cheat_hook", false);
+        obs_data_set_int(settings, "hook_rate", 1);
+        obs_data_set_bool(settings, "capture_cursor", false);
+        ctx->game = obs_source_create("game_capture", "Luma game", settings, NULL);
+        obs_data_release(settings);
+        if (!ctx->game) {
+            set_error(error, error_size, "failed to create OBS game_capture source; verify win-capture is installed");
+            return false;
+        }
+        if (ctx->visual_item) obs_sceneitem_remove(ctx->visual_item);
+        ctx->visual_item = obs_scene_add(ctx->scene, ctx->game);
+        if (!ctx->visual_item) {
+            set_error(error, error_size, "failed to add game_capture to scene");
+            release_dynamic_sources(ctx);
+            return false;
+        }
     } else {
         obs_data_t *settings = obs_data_create();
         obs_data_set_int(settings, "method", 2);
@@ -484,6 +512,17 @@ bool luma_obs_start(struct luma_obs *ctx, const char *path, const char *requeste
     if (force_this_encoder)
         snprintf(first_error, sizeof(first_error), "forced encoder failure for regression: %s", requested);
     if (!force_this_encoder && start_with_encoder(ctx, path, requested, first_error, sizeof(first_error))) {
+        if (strcmp(mode, "game") == 0) {
+            for (int i = 0; i < 60 && (!ctx->game || !obs_source_get_width(ctx->game) || !obs_source_get_height(ctx->game)); ++i)
+                Sleep(100);
+            if (!ctx->game || !obs_source_get_width(ctx->game) || !obs_source_get_height(ctx->game)) {
+                obs_output_force_stop(ctx->output);
+                release_recording(ctx);
+                release_dynamic_sources(ctx);
+                set_error(error, error_size, "OBS game_capture did not hook the selected target within 6 seconds; run Luma at the same privilege level and ensure the target uses DirectX/OpenGL/Vulkan");
+                return false;
+            }
+        }
         set_error(active, active_size, requested);
         if (fallback && fallback_size) fallback[0] = 0;
         return true;
@@ -497,6 +536,17 @@ bool luma_obs_start(struct luma_obs *ctx, const char *path, const char *requeste
     if (!start_with_encoder(ctx, path, "obs_x264", error, error_size)) {
         release_dynamic_sources(ctx);
         return false;
+    }
+    if (strcmp(mode, "game") == 0) {
+        for (int i = 0; i < 60 && (!ctx->game || !obs_source_get_width(ctx->game) || !obs_source_get_height(ctx->game)); ++i)
+            Sleep(100);
+        if (!ctx->game || !obs_source_get_width(ctx->game) || !obs_source_get_height(ctx->game)) {
+            obs_output_force_stop(ctx->output);
+            release_recording(ctx);
+            release_dynamic_sources(ctx);
+            set_error(error, error_size, "OBS game_capture did not hook the selected target within 6 seconds after encoder fallback");
+            return false;
+        }
     }
     set_error(active, active_size, "obs_x264");
     set_error(fallback, fallback_size, first_error);
