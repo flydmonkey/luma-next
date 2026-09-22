@@ -8,7 +8,7 @@ $ffprobe=Join-Path $installRoot 'bin\ffprobe.exe'
 $process=$null
 try {
     if(-not $SkipPack){& (Join-Path $PSScriptRoot 'pack.ps1') -NoZip -Sign:$Sign;if($LASTEXITCODE -ne 0){throw 'pack failed'}}
-    & (Join-Path $PSScriptRoot 'install.ps1') -SkipPack
+    & (Join-Path $repo 'dist\LumaNext\Install.ps1') -NoStart
     if($LASTEXITCODE -ne 0){throw 'install failed'}
     $run=(Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name LumaNext).LumaNext
     if($run -notlike "*$engine*"){throw "Run value does not point to installed engine: $run"}
@@ -26,5 +26,5 @@ try {
     Write-Host "[release-smoke] PASS: $($stop.data.output_path); Run=$run" -ForegroundColor Green
 } finally {
     if($process -and -not $process.HasExited){Stop-Process -Id $process.Id}
-    if(-not $SkipUninstall){& (Join-Path $PSScriptRoot 'uninstall.ps1')}
+    if(-not $SkipUninstall){& (Join-Path $repo 'dist\LumaNext\Uninstall.ps1')}
 }

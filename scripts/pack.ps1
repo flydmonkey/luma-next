@@ -72,27 +72,30 @@ foreach ($tool in @('ffmpeg.exe', 'ffprobe.exe', 'ffplay.exe')) {
     if (Test-Path -LiteralPath $source -PathType Leaf) { Copy-Item -LiteralPath $source -Destination $binDestination.FullName }
 }
 Copy-Item -LiteralPath $ffmpegLicense -Destination (Join-Path $packageRoot 'LICENSE-FFMPEG.txt')
+foreach ($installer in @('Install.cmd', 'Install.ps1', 'Uninstall.cmd', 'Uninstall.ps1')) {
+    $installerSource = Join-Path $PSScriptRoot "package\$installer"
+    $installerDestination = Join-Path $packageRoot $installer
+    if ($installer.EndsWith('.ps1', [StringComparison]::OrdinalIgnoreCase)) {
+        # Windows PowerShell 5.1 treats UTF-8 without BOM as the current ANSI
+        # code page. Package user-facing Chinese scripts with a BOM so the
+        # double-click CMD entry points work on stock Windows.
+        $installerText = [IO.File]::ReadAllText($installerSource, [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($installerDestination, $installerText, [Text.UTF8Encoding]::new($true))
+    } else {
+        # cmd.exe expects conventional CRLF batch files. Normalize here so the
+        # repository can retain its ordinary text-file line-ending policy.
+        $installerText = [IO.File]::ReadAllText($installerSource, [Text.UTF8Encoding]::new($false)) -replace "`r?`n", "`r`n"
+        [IO.File]::WriteAllText($installerDestination, $installerText, [Text.UTF8Encoding]::new($false))
+    }
+}
 if ($Sign) {
     & (Join-Path $PSScriptRoot 'sign.ps1') -File (Join-Path $binDestination.FullName 'luma-engine.exe')
     if ($LASTEXITCODE -ne 0) { throw 'sign.ps1 failed.' }
 }
 
-$readme = @"
-Luma Next $version
-
-Run: bin\luma-engine.exe
-Uninstall: use scripts\uninstall.ps1 from the source repository or remove autostart first.
-
-This distribution includes and links libobs. OBS Studio/libobs is GPL-2.0-or-later;
-see LICENSE-OBS-GPL.txt. Luma Next is GPL-3.0-or-later.
-Corresponding source: https://github.com/flydmonkey/luma-next
-OBS source: https://github.com/obsproject/obs-studio
-
-This distribution bundles the Gyan.dev FFmpeg $ffmpegVersion essentials build
-(ffmpeg, ffprobe and ffplay when supplied), licensed as GPLv3. See
-LICENSE-FFMPEG.txt. FFmpeg source: https://github.com/FFmpeg/FFmpeg/tree/n$ffmpegVersion
-"@
-Set-Content -LiteralPath (Join-Path $packageRoot 'README.txt') -Value $readme -Encoding UTF8
+$readmeTemplate = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'package\README.txt'), [Text.UTF8Encoding]::new($false))
+$readme = $readmeTemplate.Replace('{{VERSION}}', $version.Trim()).Replace('{{FFMPEG_VERSION}}', $ffmpegVersion)
+[IO.File]::WriteAllText((Join-Path $packageRoot 'README.txt'), $readme, [Text.UTF8Encoding]::new($true))
 @{ name='LumaNext'; version=$version.Trim(); architecture='x64'; ffmpeg_version=$ffmpegVersion; ffmpeg_sha256=$ffmpegSha256; built_at=(Get-Date).ToUniversalTime().ToString('o') } |
     ConvertTo-Json | Set-Content -LiteralPath (Join-Path $packageRoot 'manifest.json') -Encoding UTF8
 
