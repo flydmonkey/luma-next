@@ -11,9 +11,17 @@ use tray_icon::{
     Icon, TrayIconBuilder,
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
 };
-use windows_sys::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage, WM_QUIT,
+use windows_sys::Win32::UI::{
+    Input::KeyboardAndMouse::{
+        MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, RegisterHotKey, UnregisterHotKey,
+    },
+    WindowsAndMessaging::{
+        DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage, WM_HOTKEY, WM_QUIT,
+    },
 };
+
+const HOTKEY_START_STOP: i32 = 0x4c01;
+const HOTKEY_PAUSE_RESUME: i32 = 0x4c02;
 
 mod windows_host;
 
@@ -26,6 +34,8 @@ struct Args {
     port: u16,
     #[arg(long, help = "Disable the Windows tray icon for CI or service use")]
     no_tray: bool,
+    #[arg(long, help = "Disable Windows global hotkeys (tray remains available)")]
+    no_hotkeys: bool,
     #[arg(
         long,
         help = "Open the control page in the default browser after startup"
@@ -115,9 +125,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .then(|| {
             let engine = engine.clone();
             let control_url = control_url.clone();
+            let enable_hotkeys = !args.no_hotkeys;
             thread::Builder::new()
                 .name("luma-tray".into())
-                .spawn(move || run_tray(engine, control_url, exit_tx))
+                .spawn(move || run_tray(engine, control_url, exit_tx, enable_hotkeys))
         })
         .transpose()?;
 
@@ -133,16 +144,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn run_tray(engine: Engine, control_url: String, exit_tx: watch::Sender<bool>) {
+fn run_tray(
+    engine: Engine,
+    control_url: String,
+    exit_tx: watch::Sender<bool>,
+    enable_hotkeys: bool,
+) {
     let menu = Menu::new();
     let open_item = MenuItem::new("打开控制页", true, None);
     let action_item = MenuItem::new("开始录制", true, None);
+    let pause_item = MenuItem::new("暂停录制", false, None);
     let status_item = MenuItem::new("状态：空闲", false, None);
     let quit_item = MenuItem::new("退出", true, None);
     let separator = PredefinedMenuItem::separator();
     if let Err(error) = menu.append_items(&[
         &open_item,
         &action_item,
+        &pause_item,
         &status_item,
         &separator,
         &quit_item,
@@ -165,12 +183,37 @@ fn run_tray(engine: Engine, control_url: String, exit_tx: watch::Sender<bool>) {
     };
     let mut last_state = String::new();
     let mut quitting = false;
+    let mut registered_hotkeys = Vec::new();
+    if enable_hotkeys {
+        for (id, key, label) in [
+            (HOTKEY_START_STOP, b'R' as u32, "Ctrl+Shift+R"),
+            (HOTKEY_PAUSE_RESUME, b'P' as u32, "Ctrl+Shift+P"),
+        ] {
+            if unsafe {
+                RegisterHotKey(
+                    std::ptr::null_mut(),
+                    id,
+                    MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
+                    key,
+                )
+            } != 0
+            {
+                registered_hotkeys.push(id);
+            } else {
+                eprintln!(
+                    "全局热键 {label} 注册失败：可能已被其他程序占用；HTTP 与托盘控制仍可用。"
+                );
+            }
+        }
+    }
     loop {
         unsafe {
             let mut message: MSG = std::mem::zeroed();
             while PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 {
                 if message.message == WM_QUIT {
                     quitting = true;
+                } else if message.message == WM_HOTKEY {
+                    trigger_hotkey(&engine, message.wParam as i32);
                 }
                 TranslateMessage(&message);
                 DispatchMessageW(&message);
@@ -185,7 +228,7 @@ fn run_tray(engine: Engine, control_url: String, exit_tx: watch::Sender<bool>) {
                 let engine = engine.clone();
                 thread::spawn(move || {
                     let status = engine.tray_status();
-                    let result = if status.state == "recording" {
+                    let result = if matches!(status.state.as_str(), "recording" | "paused") {
                         engine.stop()
                     } else {
                         engine.start_default()
@@ -193,6 +236,15 @@ fn run_tray(engine: Engine, control_url: String, exit_tx: watch::Sender<bool>) {
                     match result {
                         Ok(status) => eprintln!("tray action completed: {}", status.state),
                         Err(error) => eprintln!("tray recording action failed: {error}"),
+                    }
+                });
+            } else if event.id == *pause_item.id() {
+                let engine = engine.clone();
+                thread::spawn(move || {
+                    let status = engine.tray_status();
+                    let result = engine.pause(status.state == "recording");
+                    if let Err(error) = result {
+                        eprintln!("tray pause/resume failed: {error}");
                     }
                 });
             } else if event.id == *quit_item.id() {
@@ -208,7 +260,7 @@ fn run_tray(engine: Engine, control_url: String, exit_tx: watch::Sender<bool>) {
             status.error
         );
         if state_key != last_state {
-            let recording = status.state == "recording";
+            let recording = matches!(status.state.as_str(), "recording" | "paused");
             let action = if recording {
                 "停止录制"
             } else {
@@ -216,6 +268,12 @@ fn run_tray(engine: Engine, control_url: String, exit_tx: watch::Sender<bool>) {
             };
             let summary = status_summary(&status);
             action_item.set_text(action);
+            pause_item.set_enabled(recording);
+            pause_item.set_text(if status.state == "paused" {
+                "恢复录制"
+            } else {
+                "暂停录制"
+            });
             status_item.set_text(format!("状态：{summary}"));
             let _ = tray.set_tooltip(Some(format!("Luma Next · {summary}")));
             let _ = tray.set_icon(Some(make_icon(recording)));
@@ -223,7 +281,7 @@ fn run_tray(engine: Engine, control_url: String, exit_tx: watch::Sender<bool>) {
             last_state = state_key;
         }
         if quitting {
-            if engine.tray_status().state == "recording" {
+            if matches!(engine.tray_status().state.as_str(), "recording" | "paused") {
                 match engine.stop() {
                     Ok(status) => eprintln!(
                         "recording stopped before exit: {}",
@@ -235,6 +293,9 @@ fn run_tray(engine: Engine, control_url: String, exit_tx: watch::Sender<bool>) {
                 }
             }
             let _ = exit_tx.send(true);
+            for id in registered_hotkeys.drain(..) {
+                unsafe { UnregisterHotKey(std::ptr::null_mut(), id) };
+            }
             break;
         }
         thread::sleep(Duration::from_millis(200));
@@ -242,9 +303,14 @@ fn run_tray(engine: Engine, control_url: String, exit_tx: watch::Sender<bool>) {
 }
 
 fn status_summary(status: &luma_engine::TrayStatus) -> String {
-    if status.state == "recording" {
+    if matches!(status.state.as_str(), "recording" | "paused") {
         format!(
-            "录制中 {:02}:{:02}:{:02} · {} · {}",
+            "{} {:02}:{:02}:{:02} · {} · {}",
+            if status.state == "paused" {
+                "已暂停"
+            } else {
+                "录制中"
+            },
             status.elapsed_seconds as u64 / 3600,
             status.elapsed_seconds as u64 % 3600 / 60,
             status.elapsed_seconds as u64 % 60,
@@ -258,6 +324,25 @@ fn status_summary(status: &luma_engine::TrayStatus) -> String {
     } else {
         "空闲".into()
     }
+}
+
+fn trigger_hotkey(engine: &Engine, id: i32) {
+    let engine = engine.clone();
+    thread::spawn(move || {
+        let status = engine.tray_status();
+        let result = match id {
+            HOTKEY_START_STOP if matches!(status.state.as_str(), "recording" | "paused") => {
+                engine.stop()
+            }
+            HOTKEY_START_STOP => engine.start_default(),
+            HOTKEY_PAUSE_RESUME if status.state == "recording" => engine.pause(true),
+            HOTKEY_PAUSE_RESUME if status.state == "paused" => engine.pause(false),
+            _ => return,
+        };
+        if let Err(error) = result {
+            eprintln!("global hotkey action failed: {error}");
+        }
+    });
 }
 
 fn make_icon(recording: bool) -> Icon {
