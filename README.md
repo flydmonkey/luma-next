@@ -29,7 +29,8 @@ luma-next/
   crates/          # Rust workspace
     luma-engine/   # localhost HTTP 引擎
     luma-shell/    # Windows WebView2 薄壳
-  web/             # WebUI 静态资源或子项目（后续接入）
+  web/             # 正式 WebUI（录制 / 片库 / 设置）
+  scripts/         # 可重复录制回归
   docs/
     BOUNDARY.md    # 技术边界
     CADENCE.md     # 开发节奏与里程碑
@@ -72,6 +73,15 @@ curl.exe -X POST http://127.0.0.1:18765/api/v1/session/stop
 文件非空、存在实际编码帧，并且 ffprobe 确认 H.264 视频、AAC 音频及可信时长后才
 返回 `ok:true`。
 
+完整的 20 秒回归（可自行启动引擎）运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\record-regression.ps1
+```
+
+脚本再次用 ffprobe 独立检查音视频流、分辨率、文件大小以及媒体/墙钟时长。硬案例建议
+先在 Chrome 播放一段动态且有声音的视频，再运行脚本。
+
 ## 运行 Windows 桌面壳
 
 开发期采用“先引擎、后壳”的明确流程；壳不会猜测或拉起一个未定义路径的引擎
@@ -94,7 +104,16 @@ Runtime（Windows 11 通常已包含）。详细手测步骤见 [桌面壳说明
 
 ## API
 
-控制面兼容旧 Luma **/api/v1 子集**（probe、session、target、settings、library）。完整字段以后续 openapi / skill 文档为准；默认只监听本机，局域网需显式开启并配置 accessKey。
+控制面兼容旧 Luma **/api/v1 子集**（probe、session、settings、library）。M3 示例：
+
+```powershell
+curl.exe http://127.0.0.1:18765/api/v1/library
+curl.exe http://127.0.0.1:18765/api/v1/settings
+curl.exe -X PUT -H "Content-Type: application/json" -d '{"output_directory":"C:\\Users\\me\\Videos\\Luma","record_system_audio":true,"record_microphone":false,"quality":"1080p30"}' http://127.0.0.1:18765/api/v1/settings
+curl.exe -X DELETE http://127.0.0.1:18765/api/v1/library/luma-123.mkv
+```
+
+默认只监听本机。详情见 [M3 API 与持久化](docs/M3.md) 与 [WebUI 迁移说明](docs/WEBUI.md)。
 
 ## 开发节奏
 
@@ -106,8 +125,8 @@ Runtime（Windows 11 通常已包含）。详细手测步骤见 [桌面壳说明
 |---|---|
 | M0 | HTTP 起服 + /api/v1 probe/session 占位 |
 | M1 | libobs 全屏 + 系统声录到文件（已完成本机验收） |
-| M2 | WebUI 对接 start/stop/状态 |
-| M3 | library / settings 持久化 |
+| M2 | 正式 WebUI 对接 start/stop/状态（完成） |
+| M3 | library / settings 持久化与回归脚本（完成） |
 | M4 | 硬编选择 + 诚实降级/遥测 |
 
 ## 相关文档
@@ -117,4 +136,6 @@ Runtime（Windows 11 通常已包含）。详细手测步骤见 [桌面壳说明
 - [M0 HTTP 控制面](docs/M0.md)
 - [M1 libobs 录制](docs/M1.md)
 - [M2 最小 WebUI](docs/M2.md)
+- [M3 API 与持久化](docs/M3.md)
+- [WebUI 迁移说明](docs/WEBUI.md)
 - [设计规格 2026-09-22](docs/superpowers/specs/2026-09-22-luma-next-design.md)

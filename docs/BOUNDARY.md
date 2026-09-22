@@ -13,7 +13,8 @@
 - **单仓单进程**：Rust 宿主初始化 libobs，提供 HTTP，并可托管 WebUI 静态资源。
 - **控制面**：HTTP；尽量兼容旧 Luma /api/v1 子集（probe、session、target、settings、library）。
 - **引擎**：libobs 负责采集 / 混音 / 编码 / 封装；不自研 DXGI→MF SinkWriter 管线。
-- **UI**：WebUI 优先；不把 WinUI 迁入本仓。
+- **UI**：WebUI 优先；参考旧 WinUI 的信息架构、文案与使用体验重新实现，绝不迁入
+  XAML/C# 或旧录制代码。营销站不是录制 App UI 的来源。
 - **许可**：链接 libobs → **GPL**；分发与闭源策略必须在 README 中明示，不可默认当专有软件发。
 
 ## 做（In scope）
@@ -60,6 +61,10 @@
 | 引擎 | 自研 DXGI/WGC + MF | 嵌 libobs |
 | 控制 | LAN /api/v1 | 同形子集，逐步对齐 |
 | 许可 | 自有代码为主 | **GPL（因 libobs）** |
+
+M3 起正式 WebUI 位于 `web/`，由引擎静态托管。它可呈现未来模式，但只有引擎真实
+支持的“主显示器 + 系统声 + 1080p30 x264”可发起录制；区域、窗口、游戏、纯音频、
+麦克风与硬件编码均须显示为未接入，不得假成功。
 
 ## 成功标准（产品）
 
