@@ -12,3 +12,7 @@
 .picker-selection { position: absolute; border: 2px solid #ef6a5c; background: #c42b1c22; box-shadow: 0 0 0 9999px #00000055; }
 .picker-selection span { position: absolute; left: 8px; top: 8px; padding: 4px 7px; border-radius: 5px; background: #202124; color: #fff; font-size: 11px; white-space: nowrap; }
 .picking { overflow: hidden; }
+.region-buttons { display: flex; gap: 8px; align-items: center; }
+.link-button { border: 0; background: transparent; color: #8f3027; font: 12px inherit; cursor: pointer; }
+#game-target-row { grid-template-columns: 1fr; }
+#game-target-row > div { grid-template-columns: auto minmax(220px, 1fr) auto; gap: 10px; }

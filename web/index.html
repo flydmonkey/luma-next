@@ -26,7 +26,7 @@
           <button class="mode active" data-mode="display"><b>▰</b><span>显示器</span><small>主显示器</small></button>
           <button class="mode" data-mode="region"><b>⌗</b><span>区域</span><small>框选显示器范围</small></button>
           <button class="mode" data-mode="window"><b>▢</b><span>窗口</span><small>选择应用窗口</small></button>
-          <button class="mode locked" data-mode="game"><b>◇</b><span>游戏</span><small>尚未接入</small></button>
+          <button class="mode" data-mode="game"><b>◇</b><span>游戏</span><small>OBS 游戏捕获</small></button>
           <button class="mode locked" data-mode="audio"><b>♪</b><span>录音</span><small>尚未接入</small></button>
         </div>
       </div>
@@ -34,7 +34,10 @@
         <div><span>录制显示器</span><select id="display-target" aria-label="录制显示器"></select></div>
       </div>
       <div id="region-target-row" class="quick-settings" hidden>
-        <div><span>录制区域</span><strong id="region-summary">尚未框选</strong><button id="pick-region" class="secondary">框选区域</button></div>
+        <div><span>录制区域</span><strong id="region-summary">尚未框选</strong><span class="region-buttons"><button id="pick-region" class="secondary">桌面框选</button><button id="pick-region-browser" class="link-button">浏览器回退</button></span></div>
+      </div>
+      <div id="game-target-row" class="quick-settings" hidden>
+        <div><span>捕获游戏</span><select id="game-target" aria-label="捕获游戏"></select><button id="refresh-games" class="secondary">刷新</button></div>
       </div>
       <div id="window-target-row" class="quick-settings" hidden>
         <div><span>录制窗口</span><select id="window-target" aria-label="录制窗口"></select><button id="refresh-windows" class="secondary">刷新</button></div>
@@ -45,7 +48,7 @@
         <div><span>清晰度 / 编码器</span><strong>1080p · 30 fps</strong><span id="home-encoder" class="pill">x264</span></div>
       </div>
       <div class="record-actions"><button id="record-button" class="record-button"><span></span><label>开始录制</label></button><button id="pause-button" class="secondary pause-button" hidden>暂停</button></div>
-      <p class="capability">当前可靠能力：显示器、区域或窗口 + 系统音频/麦克风，30 fps</p>
+      <p class="capability">当前能力：显示器、区域、窗口或可成功 hook 的游戏 + 系统音频/麦克风，30 fps</p>
     </section>
 
     <section class="page" data-page="library" hidden>
@@ -60,9 +63,10 @@
       <form id="settings-form">
         <h2>录制</h2>
         <div class="setting-card"><div><strong>输出目录</strong><p>新录像与片库读取的位置</p></div><input id="output-directory" required></div>
-        <div class="setting-card"><div><strong>默认模式</strong><p>窗口关闭或最小化时画面可能变黑</p></div><select id="capture-mode"><option value="display">显示器</option><option value="region">区域</option><option value="window">窗口</option></select></div>
+        <div class="setting-card"><div><strong>默认模式</strong><p>窗口关闭或游戏 hook 中断时需重新选择</p></div><select id="capture-mode"><option value="display">显示器</option><option value="region">区域</option><option value="window">窗口</option><option value="game">游戏</option></select></div>
         <div class="setting-card"><div><strong>默认显示器</strong><p>显示器与区域模式使用</p></div><select id="settings-display"></select></div>
         <div class="setting-card"><div><strong>默认窗口</strong><p>窗口模式使用；列表来自当前桌面</p></div><select id="settings-window"></select></div>
+        <div class="setting-card"><div><strong>默认游戏</strong><p>必须由 OBS game_capture 成功 hook</p></div><select id="settings-game"></select></div>
         <div class="setting-card"><div><strong>系统声</strong><p>录制 Windows 默认输出设备</p></div><button id="settings-system-audio" type="button" class="switch on"><i></i></button></div>
         <div class="setting-card"><div><strong>麦克风</strong><p>需要 Windows 麦克风隐私权限</p></div><button id="settings-microphone" type="button" class="switch"><i></i></button></div>
         <div class="setting-card"><div><strong>麦克风设备</strong><p>来自 OBS/WASAPI 的当前输入设备</p></div><select id="mic-device"></select></div>
