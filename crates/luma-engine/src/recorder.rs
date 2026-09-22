@@ -160,6 +160,7 @@ pub struct ObsRecorder {
 
 struct ActiveRecording {
     path: PathBuf,
+    audio_only: bool,
 }
 
 // libobs owns its worker threads; access to this handle is serialized by the engine mutex.
@@ -388,7 +389,10 @@ impl ObsRecorder {
         if !started {
             return Err(read_error(&error));
         }
-        self.active = Some(ActiveRecording { path: path.clone() });
+        self.active = Some(ActiveRecording {
+            path: path.clone(),
+            audio_only: capture.mode == "audio_only",
+        });
         let fallback_reason = read_error(&fallback);
         Ok(RecordingStart {
             path,
@@ -446,6 +450,7 @@ impl ObsRecorder {
             wall_seconds,
             encoded_frames,
             reported_bytes,
+            active.audio_only,
         )?;
         Ok((active.path, validation))
     }
@@ -518,6 +523,7 @@ fn validate_recording(
     wall_seconds: f64,
     encoded_frames: u32,
     reported_bytes: u64,
+    audio_only: bool,
 ) -> Result<RecordingValidation, String> {
     let bytes = std::fs::metadata(path)
         .map_err(|error| {
@@ -527,7 +533,7 @@ fn validate_recording(
             )
         })?
         .len();
-    if bytes == 0 || encoded_frames == 0 {
+    if bytes == 0 || (!audio_only && encoded_frames == 0) {
         return Err(format!(
             "OBS produced no usable video frames (frames={encoded_frames}, bytes={bytes}, reported_bytes={reported_bytes})"
         ));
@@ -571,7 +577,7 @@ fn validate_recording(
         .ok_or_else(|| "ffprobe returned no valid container duration".to_string())?;
     let ffprobe_tolerance = 1.5;
     let clock_tolerance = (wall_seconds * 0.005).max(1.5);
-    if !video_stream || !audio_stream {
+    if !audio_stream || (!audio_only && !video_stream) {
         return Err(format!(
             "recording is missing required streams (video={video_stream}, audio={audio_stream})"
         ));

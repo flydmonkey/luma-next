@@ -12,6 +12,7 @@ struct luma_obs {
     obs_source_t *monitor;
     obs_source_t *window;
     obs_source_t *game;
+    obs_source_t *audio_visual;
     obs_source_t *desktop_audio;
     obs_source_t *microphone;
     obs_sceneitem_t *visual_item;
@@ -147,7 +148,7 @@ static void release_dynamic_sources(struct luma_obs *ctx)
         obs_source_release(ctx->microphone);
         ctx->microphone = NULL;
     }
-    if (ctx->window || ctx->game) {
+    if (ctx->window || ctx->game || ctx->audio_visual) {
         if (ctx->visual_item) {
             obs_sceneitem_remove(ctx->visual_item);
             ctx->visual_item = NULL;
@@ -159,6 +160,10 @@ static void release_dynamic_sources(struct luma_obs *ctx)
         if (ctx->game) {
             obs_source_release(ctx->game);
             ctx->game = NULL;
+        }
+        if (ctx->audio_visual) {
+            obs_source_release(ctx->audio_visual);
+            ctx->audio_visual = NULL;
         }
         ctx->visual_item = obs_scene_add(ctx->scene, ctx->monitor);
     }
@@ -316,7 +321,20 @@ static bool configure_sources(struct luma_obs *ctx, const char *mode, const char
                               char *error, size_t error_size)
 {
     release_dynamic_sources(ctx);
-    if (strcmp(mode, "window") == 0) {
+    if (strcmp(mode, "audio_only") == 0) {
+        obs_data_t *settings = obs_data_create();
+        obs_data_set_int(settings, "width", 32);
+        obs_data_set_int(settings, "height", 32);
+        obs_data_set_int(settings, "color", 0xFF000000);
+        ctx->audio_visual = obs_source_create("color_source_v3", "Luma audio-only placeholder", settings, NULL);
+        obs_data_release(settings);
+        if (!ctx->audio_visual) {
+            set_error(error, error_size, "failed to create the documented audio-only placeholder video source");
+            return false;
+        }
+        if (ctx->visual_item) obs_sceneitem_remove(ctx->visual_item);
+        ctx->visual_item = obs_scene_add(ctx->scene, ctx->audio_visual);
+    } else if (strcmp(mode, "window") == 0) {
         obs_data_t *settings = obs_data_create();
         obs_data_set_string(settings, "window", target);
         obs_data_set_int(settings, "method", 2);
@@ -406,12 +424,12 @@ bool luma_obs_encoder_available(struct luma_obs *ctx, const char *wanted)
     return false;
 }
 
-static bool start_with_encoder(struct luma_obs *ctx, const char *path, const char *encoder_id,
+static bool start_with_encoder(struct luma_obs *ctx, const char *path, const char *encoder_id, bool audio_only,
                                char *error, size_t error_size)
 {
     obs_data_t *video_settings = obs_data_create();
     obs_data_set_string(video_settings, "rate_control", "CBR");
-    obs_data_set_int(video_settings, "bitrate", 6000);
+    obs_data_set_int(video_settings, "bitrate", audio_only ? 50 : 6000);
     obs_data_set_int(video_settings, "keyint_sec", 2);
     obs_data_set_string(video_settings, "preset", "veryfast");
     obs_data_set_string(video_settings, "profile", "high");
@@ -471,8 +489,10 @@ bool luma_obs_start(struct luma_obs *ctx, const char *path, const char *requeste
         set_error(error, error_size, "recording is already active");
         return false;
     }
-    uint32_t base_width = strcmp(mode, "region") == 0 ? region_width : display_width;
-    uint32_t base_height = strcmp(mode, "region") == 0 ? region_height : display_height;
+    bool audio_only = strcmp(mode, "audio_only") == 0;
+    bool game = strcmp(mode, "game") == 0;
+    uint32_t base_width = audio_only ? 32 : (game ? 1920 : (strcmp(mode, "region") == 0 ? region_width : display_width));
+    uint32_t base_height = audio_only ? 32 : (game ? 1080 : (strcmp(mode, "region") == 0 ? region_height : display_height));
     if (strcmp(mode, "window") != 0 && base_width && base_height) {
         struct obs_video_info video = {0};
         video.graphics_module = "libobs-d3d11.dll";
@@ -511,7 +531,7 @@ bool luma_obs_start(struct luma_obs *ctx, const char *path, const char *requeste
     bool force_this_encoder = forced_failure && strcmp(forced_failure, requested) == 0;
     if (force_this_encoder)
         snprintf(first_error, sizeof(first_error), "forced encoder failure for regression: %s", requested);
-    if (!force_this_encoder && start_with_encoder(ctx, path, requested, first_error, sizeof(first_error))) {
+    if (!force_this_encoder && start_with_encoder(ctx, path, requested, audio_only, first_error, sizeof(first_error))) {
         if (strcmp(mode, "game") == 0) {
             for (int i = 0; i < 60 && (!ctx->game || !obs_source_get_width(ctx->game) || !obs_source_get_height(ctx->game)); ++i)
                 Sleep(100);
@@ -533,7 +553,7 @@ bool luma_obs_start(struct luma_obs *ctx, const char *path, const char *requeste
         return false;
     }
     blog(LOG_WARNING, "Luma encoder %s failed, falling back to obs_x264: %s", requested, first_error);
-    if (!start_with_encoder(ctx, path, "obs_x264", error, error_size)) {
+    if (!start_with_encoder(ctx, path, "obs_x264", audio_only, error, error_size)) {
         release_dynamic_sources(ctx);
         return false;
     }
@@ -612,9 +632,9 @@ bool luma_obs_stop(struct luma_obs *ctx, uint32_t *encoded_frames, uint64_t *tot
         return false;
     }
     Sleep(500);
-    if (encoded_frames) *encoded_frames = obs_encoder_get_encoded_frames(ctx->video_encoder);
+    if (encoded_frames) *encoded_frames = ctx->video_encoder ? obs_encoder_get_encoded_frames(ctx->video_encoder) : 0;
     if (total_bytes) *total_bytes = obs_output_get_total_bytes(ctx->output);
-    if (media_seconds) *media_seconds = (double)obs_output_get_total_frames(ctx->output) / 30.0;
+    if (media_seconds) *media_seconds = ctx->video_encoder ? (double)obs_output_get_total_frames(ctx->output) / 30.0 : stopped_wall_seconds;
     if (wall_seconds) *wall_seconds = stopped_wall_seconds;
     const char *last_error = obs_output_get_last_error(ctx->output);
     if (last_error && *last_error) {

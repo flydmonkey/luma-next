@@ -27,7 +27,7 @@
           <button class="mode" data-mode="region"><b>⌗</b><span>区域</span><small>框选显示器范围</small></button>
           <button class="mode" data-mode="window"><b>▢</b><span>窗口</span><small>选择应用窗口</small></button>
           <button class="mode" data-mode="game"><b>◇</b><span>游戏</span><small>OBS 游戏捕获</small></button>
-          <button class="mode locked" data-mode="audio"><b>♪</b><span>录音</span><small>尚未接入</small></button>
+          <button class="mode" data-mode="audio_only"><b>♪</b><span>录音</span><small>仅系统声 / 麦克风</small></button>
         </div>
       </div>
       <div id="display-target-row" class="quick-settings">
@@ -63,7 +63,7 @@
       <form id="settings-form">
         <h2>录制</h2>
         <div class="setting-card"><div><strong>输出目录</strong><p>新录像与片库读取的位置</p></div><input id="output-directory" required></div>
-        <div class="setting-card"><div><strong>默认模式</strong><p>窗口关闭或游戏 hook 中断时需重新选择</p></div><select id="capture-mode"><option value="display">显示器</option><option value="region">区域</option><option value="window">窗口</option><option value="game">游戏</option></select></div>
+        <div class="setting-card"><div><strong>默认模式</strong><p>窗口关闭或游戏 hook 中断时需重新选择</p></div><select id="capture-mode"><option value="display">显示器</option><option value="region">区域</option><option value="window">窗口</option><option value="game">游戏</option><option value="audio_only">纯音频</option></select></div>
         <div class="setting-card"><div><strong>默认显示器</strong><p>显示器与区域模式使用</p></div><select id="settings-display"></select></div>
         <div class="setting-card"><div><strong>默认窗口</strong><p>窗口模式使用；列表来自当前桌面</p></div><select id="settings-window"></select></div>
         <div class="setting-card"><div><strong>默认游戏</strong><p>必须由 OBS game_capture 成功 hook</p></div><select id="settings-game"></select></div>

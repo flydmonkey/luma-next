@@ -65,9 +65,9 @@ impl Settings {
         }
         if !matches!(
             self.capture_mode.as_str(),
-            "display" | "window" | "region" | "game"
+            "display" | "window" | "region" | "game" | "audio_only"
         ) {
-            return Err("capture_mode must be display, window, region, or game".into());
+            return Err("capture_mode must be display, window, region, game, or audio_only".into());
         }
         if self.capture_mode == "region" && self.region.is_none() {
             return Err("region is required for region capture".into());

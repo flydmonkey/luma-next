@@ -493,10 +493,13 @@ fn start_locked(
         .unwrap_or(configured.record_system_audio);
     let microphone = request.microphone.unwrap_or(configured.record_microphone);
     let quality = request.quality.as_deref().unwrap_or(&configured.quality);
-    if !matches!(mode, "display" | "window" | "region" | "game") {
+    if !matches!(
+        mode,
+        "display" | "window" | "region" | "game" | "audio_only"
+    ) {
         return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
-            "only display, window, region, and game capture are implemented".into(),
+            "only display, window, region, game, and audio_only capture are implemented".into(),
         ));
     }
     if !system_audio && !microphone {
@@ -575,14 +578,14 @@ fn start_locked(
         .recorder
         .as_ref()
         .map_or_else(Vec::new, ObsRecorder::displays);
-    let display = if matches!(mode, "window" | "game") {
+    let display = if matches!(mode, "window" | "game" | "audio_only") {
         None
     } else if display_id == "primary" {
         displays.iter().find(|item| item.primary)
     } else {
         displays.iter().find(|item| item.id == display_id)
     };
-    if !matches!(mode, "window" | "game") && display.is_none() {
+    if !matches!(mode, "window" | "game" | "audio_only") && display.is_none() {
         return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
             "display_id is unavailable".into(),
@@ -632,7 +635,9 @@ fn start_locked(
             "libobs recorder is not initialized".into(),
         ));
     };
-    let target_summary = if mode == "window" {
+    let target_summary = if mode == "audio_only" {
+        "纯音频".into()
+    } else if mode == "window" {
         recorder
             .windows()
             .into_iter()
