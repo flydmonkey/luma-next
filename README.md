@@ -114,4 +114,7 @@ Runtime（Windows 11 通常已包含）。详细手测步骤见 [桌面壳说明
 
 - [技术边界](docs/BOUNDARY.md)
 - [开发节奏](docs/CADENCE.md)
+- [M0 HTTP 控制面](docs/M0.md)
+- [M1 libobs 录制](docs/M1.md)
+- [M2 最小 WebUI](docs/M2.md)
 - [设计规格 2026-09-22](docs/superpowers/specs/2026-09-22-luma-next-design.md)

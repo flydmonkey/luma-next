@@ -17,7 +17,7 @@
 |---|---|---|
 | **M0（完成）** | HTTP 起服 + /api/v1 probe/session 占位 | curl 探活与 session 查询通 |
 | **M1（完成）** | libobs 全屏 + 系统声录到文件 | ffprobe：音视频时长接近墙钟；硬案例不成短视频 |
-| **M2** | WebUI 对接 start/stop/状态 | 页面可完整开始/停止一段录制 |
+| **M2（雏形完成）** | WebUI 对接 start/stop/状态 | 页面可完整开始/停止一段录制 |
 | **M3** | library 列表/删除、settings 持久化 | 与旧 Luma 使用习惯接近 |
 | **M4** | 硬编选择 + 诚实降级/遥测 | 可选 AMF/QSV/NVENC/x264；失败明文；遥测不含假 30fps |
 
