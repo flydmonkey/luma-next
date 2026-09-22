@@ -3,6 +3,8 @@ param(
     [ValidateRange(20, 300)][int]$Seconds = 20,
     [ValidateSet('auto', 'x264', 'amf')][string]$Encoder = 'auto',
     [switch]$RequireHw,
+    [switch]$SkipMicrophone,
+    [string]$WindowTitleSubstring,
     [switch]$EngineAlreadyRunning
 )
 $ErrorActionPreference = 'Stop'
@@ -30,11 +32,11 @@ function Invoke-LumaApi([string]$Path, [string]$Method = 'GET', [object]$Body = 
     return $response.data
 }
 
-function Invoke-RecordingCase([string]$EncoderId, [string]$Label, [bool]$Hardware) {
+function Invoke-RecordingCase([string]$EncoderId, [string]$Label, [bool]$Hardware, [string]$Mode = 'display', [string]$WindowId = '', [bool]$SystemAudio = $true, [bool]$Microphone = $false) {
     Write-Host "[$Label] Starting a $Seconds-second recording with $EncoderId."
     $startedAt = Get-Date
     $script:recording = $true
-    $start = Invoke-LumaApi '/api/v1/session/start' 'POST' @{ mode='display'; system_audio=$true; microphone=$false; quality='1080p30'; encoder=$EncoderId }
+    $start = Invoke-LumaApi '/api/v1/session/start' 'POST' @{ mode=$Mode; window_id=$(if($WindowId){$WindowId}else{$null}); system_audio=$SystemAudio; microphone=$Microphone; mic_device_id='default'; quality='1080p30'; encoder=$EncoderId }
     Write-Host "[$Label] requested=$($start.encoder_requested) active=$($start.encoder_active) fallback=$($start.encoder_fallback)"
     if ($start.encoder_fallback) {
         Write-Warning "[$Label] fallback reason: $($start.fallback_reason)"
@@ -45,6 +47,7 @@ function Invoke-RecordingCase([string]$EncoderId, [string]$Label, [bool]$Hardwar
         Start-Sleep -Seconds 1
     }
     Write-Progress -Activity "Luma $Label regression" -Completed
+    $live = Invoke-LumaApi '/api/v1/session'
     $stop = Invoke-LumaApi '/api/v1/session/stop' 'POST'
     $script:recording = $false
     $wallSeconds = ((Get-Date)-$startedAt).TotalSeconds
@@ -56,13 +59,16 @@ function Invoke-RecordingCase([string]$EncoderId, [string]$Label, [bool]$Hardwar
     $video = @($probe.streams | Where-Object codec_type -eq 'video') | Select-Object -First 1
     $audio = @($probe.streams | Where-Object codec_type -eq 'audio') | Select-Object -First 1
     $mediaSeconds = [double]$probe.format.duration; $sizeBytes = [long]$probe.format.size
-    $tolerance = [Math]::Max(3.0,$wallSeconds*0.35)
+    $tolerance = [Math]::Max(2.5,$wallSeconds*0.005)
     if ($null -eq $video -or $null -eq $audio) { throw 'ffprobe did not find both video and audio streams.' }
     if ($video.width -lt 640 -or $video.height -lt 360) { throw "Implausible resolution $($video.width)x$($video.height)." }
     if ($sizeBytes -lt 102400) { throw "Output is suspiciously small: $sizeBytes bytes." }
     if ($mediaSeconds -lt 1 -or [Math]::Abs($mediaSeconds-$wallSeconds) -gt $tolerance) { throw "Duration mismatch: media=$mediaSeconds wall=$wallSeconds tolerance=$tolerance." }
+    $obsMedia=[double]$stop.media_elapsed_seconds; $uiMedia=[double]$stop.elapsed_seconds; $liveMedia=[double]$live.media_elapsed_seconds
+    if([Math]::Abs($obsMedia-$mediaSeconds) -ge 1.5){throw "OBS media/ffprobe mismatch: obs=$obsMedia ffprobe=$mediaSeconds."}
+    if([Math]::Abs($uiMedia-$mediaSeconds) -ge 1.0){throw "Stopped UI timer disagreed with ffprobe: ui=$uiMedia ffprobe=$mediaSeconds."}
     Write-Host "[$Label] PASS: $outputPath" -ForegroundColor Green
-    Write-Host ("[$Label] {0}x{1} {2}, video+audio, media {3:N2}s, wall {4:N2}s, {5:N0} bytes; active={6}, fallback={7}" -f $video.width,$video.height,$video.codec_name,$mediaSeconds,$wallSeconds,$sizeBytes,$stop.encoder_active,$stop.encoder_fallback)
+    Write-Host ("[$Label] {0}x{1} {2}, ffprobe {3:N2}s, OBS media {4:N2}s, stopped UI {5:N2}s, pre-stop live {6:N2}s, OBS wall {7:N2}s, {8:N0} bytes; active={9}, fallback={10}" -f $video.width,$video.height,$video.codec_name,$mediaSeconds,$obsMedia,$uiMedia,$liveMedia,$stop.wall_elapsed_seconds,$sizeBytes,$stop.encoder_active,$stop.encoder_fallback)
 }
 
 try {
@@ -81,6 +87,16 @@ try {
     if($Encoder -in @('auto','amf')){
         $selected=if($Encoder -eq 'amf'){$hardware|Where-Object id -eq 'h264_texture_amf'|Select-Object -First 1}else{$hardware|Select-Object -First 1}
         if($null -eq $selected){$reason='No available H.264 hardware encoder was reported by libobs.';if($RequireHw){throw $reason};Write-Host "[hardware] SKIP: $reason" -ForegroundColor Yellow}else{Invoke-RecordingCase $selected.id 'hardware' $true}
+    }
+    if(-not $SkipMicrophone){
+        $inputs=@((Invoke-LumaApi '/api/v1/devices/audio').inputs)
+        if($inputs.Count -eq 0){Write-Host '[microphone] SKIP: OBS/WASAPI reported no input device.' -ForegroundColor Yellow}else{Invoke-RecordingCase 'obs_x264' 'microphone' $false 'display' '' $true $true}
+    }
+    if($WindowTitleSubstring){
+        $windows=@((Invoke-LumaApi '/api/v1/targets').windows)
+        $window=$windows|Where-Object {$_.available -and $_.title -like "*$WindowTitleSubstring*"}|Select-Object -First 1
+        if($null -eq $window){throw "No capturable window title contains '$WindowTitleSubstring'."}
+        Invoke-RecordingCase 'obs_x264' 'window' $false 'window' $window.id $true $false
     }
 } catch {
     if($recording){try{$null=Invoke-LumaApi '/api/v1/session/stop' 'POST'}catch{}}
