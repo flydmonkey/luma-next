@@ -73,10 +73,12 @@ curl.exe -X POST http://127.0.0.1:18765/api/v1/session/stop
 文件非空、存在实际编码帧，并且 ffprobe 确认 H.264 视频、AAC 音频及可信时长后才
 返回 `ok:true`。
 
-完整的 20 秒回归（可自行启动引擎）运行：
+完整回归（默认依次录制 20 秒 x264，以及本机存在时的首选硬编）运行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\record-regression.ps1
+# 要求硬编存在且不得降级
+powershell -ExecutionPolicy Bypass -File .\scripts\record-regression.ps1 -Encoder amf -RequireHw
 ```
 
 脚本再次用 ffprobe 独立检查音视频流、分辨率、文件大小以及媒体/墙钟时长。硬案例建议
@@ -108,6 +110,7 @@ Runtime（Windows 11 通常已包含）。详细手测步骤见 [桌面壳说明
 
 ```powershell
 curl.exe http://127.0.0.1:18765/api/v1/library
+curl.exe http://127.0.0.1:18765/api/v1/encoders
 curl.exe http://127.0.0.1:18765/api/v1/settings
 curl.exe -X PUT -H "Content-Type: application/json" -d '{"output_directory":"C:\\Users\\me\\Videos\\Luma","record_system_audio":true,"record_microphone":false,"quality":"1080p30"}' http://127.0.0.1:18765/api/v1/settings
 curl.exe -X DELETE http://127.0.0.1:18765/api/v1/library/luma-123.mkv
@@ -127,7 +130,7 @@ curl.exe -X DELETE http://127.0.0.1:18765/api/v1/library/luma-123.mkv
 | M1 | libobs 全屏 + 系统声录到文件（已完成本机验收） |
 | M2 | 正式 WebUI 对接 start/stop/状态（完成） |
 | M3 | library / settings 持久化与回归脚本（完成） |
-| M4 | 硬编选择 + 诚实降级/遥测 |
+| M4 | 硬编探测/选择 + 诚实 x264 降级/遥测（完成） |
 
 ## 相关文档
 
@@ -138,4 +141,5 @@ curl.exe -X DELETE http://127.0.0.1:18765/api/v1/library/luma-123.mkv
 - [M2 最小 WebUI](docs/M2.md)
 - [M3 API 与持久化](docs/M3.md)
 - [WebUI 迁移说明](docs/WEBUI.md)
+- [M4 硬件编码](docs/M4.md)
 - [设计规格 2026-09-22](docs/superpowers/specs/2026-09-22-luma-next-design.md)
