@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Luma</title><link rel="stylesheet" href="/app.css"><style>[hidden]{display:none!important}#window-target-row{grid-template-columns:1fr}#window-target-row>div{grid-template-columns:auto minmax(220px,1fr) auto;gap:10px}#window-target-row select{min-width:0}</style></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Luma</title><link rel="stylesheet" href="/app.css"><link rel="stylesheet" href="/m6.css"><style>[hidden]{display:none!important}#window-target-row{grid-template-columns:1fr}#window-target-row>div{grid-template-columns:auto minmax(220px,1fr) auto;gap:10px}#window-target-row select{min-width:0}</style></head>
 <body>
 <div class="app-shell">
   <aside class="rail" aria-label="页面导航">
@@ -24,11 +24,17 @@
         <h2>录制模式</h2>
         <div class="modes">
           <button class="mode active" data-mode="display"><b>▰</b><span>显示器</span><small>主显示器</small></button>
-          <button class="mode locked" data-mode="region"><b>⌗</b><span>区域</span><small>尚未接入</small></button>
+          <button class="mode" data-mode="region"><b>⌗</b><span>区域</span><small>框选显示器范围</small></button>
           <button class="mode" data-mode="window"><b>▢</b><span>窗口</span><small>选择应用窗口</small></button>
           <button class="mode locked" data-mode="game"><b>◇</b><span>游戏</span><small>尚未接入</small></button>
           <button class="mode locked" data-mode="audio"><b>♪</b><span>录音</span><small>尚未接入</small></button>
         </div>
+      </div>
+      <div id="display-target-row" class="quick-settings">
+        <div><span>录制显示器</span><select id="display-target" aria-label="录制显示器"></select></div>
+      </div>
+      <div id="region-target-row" class="quick-settings" hidden>
+        <div><span>录制区域</span><strong id="region-summary">尚未框选</strong><button id="pick-region" class="secondary">框选区域</button></div>
       </div>
       <div id="window-target-row" class="quick-settings" hidden>
         <div><span>录制窗口</span><select id="window-target" aria-label="录制窗口"></select><button id="refresh-windows" class="secondary">刷新</button></div>
@@ -38,8 +44,8 @@
         <div><span>麦克风</span><strong id="microphone-label">关闭</strong><button id="microphone-toggle" class="switch" aria-label="切换麦克风"><i></i></button></div>
         <div><span>清晰度 / 编码器</span><strong>1080p · 30 fps</strong><span id="home-encoder" class="pill">x264</span></div>
       </div>
-      <button id="record-button" class="record-button"><span></span><label>开始录制</label></button>
-      <p class="capability">当前可靠能力：主显示器或窗口 + 系统音频/麦克风，1080p30</p>
+      <div class="record-actions"><button id="record-button" class="record-button"><span></span><label>开始录制</label></button><button id="pause-button" class="secondary pause-button" hidden>暂停</button></div>
+      <p class="capability">当前可靠能力：显示器、区域或窗口 + 系统音频/麦克风，30 fps</p>
     </section>
 
     <section class="page" data-page="library" hidden>
@@ -54,7 +60,8 @@
       <form id="settings-form">
         <h2>录制</h2>
         <div class="setting-card"><div><strong>输出目录</strong><p>新录像与片库读取的位置</p></div><input id="output-directory" required></div>
-        <div class="setting-card"><div><strong>默认模式</strong><p>窗口关闭或最小化时画面可能变黑</p></div><select id="capture-mode"><option value="display">主显示器</option><option value="window">窗口</option></select></div>
+        <div class="setting-card"><div><strong>默认模式</strong><p>窗口关闭或最小化时画面可能变黑</p></div><select id="capture-mode"><option value="display">显示器</option><option value="region">区域</option><option value="window">窗口</option></select></div>
+        <div class="setting-card"><div><strong>默认显示器</strong><p>显示器与区域模式使用</p></div><select id="settings-display"></select></div>
         <div class="setting-card"><div><strong>默认窗口</strong><p>窗口模式使用；列表来自当前桌面</p></div><select id="settings-window"></select></div>
         <div class="setting-card"><div><strong>系统声</strong><p>录制 Windows 默认输出设备</p></div><button id="settings-system-audio" type="button" class="switch on"><i></i></button></div>
         <div class="setting-card"><div><strong>麦克风</strong><p>需要 Windows 麦克风隐私权限</p></div><button id="settings-microphone" type="button" class="switch"><i></i></button></div>
@@ -63,10 +70,17 @@
         <h2>编码器</h2>
         <div class="setting-card"><div><strong>录像编码器</strong><p id="encoder-help">只显示 libobs 实际探测到的 H.264 编码器</p></div><select id="encoder" required><option value="obs_x264">Software (x264)</option></select></div>
         <div id="unavailable-encoders" class="setting-card disabled"><div><strong>本机不可用</strong><p>正在探测硬件编码器…</p></div><span class="pill">只读</span></div>
+        <h2>快捷键</h2>
+        <div class="setting-card"><div><strong>开始 / 停止</strong><p>系统全局热键；被占用时引擎日志会明确提示</p></div><span class="pill">Ctrl + Shift + R</span></div>
+        <div class="setting-card"><div><strong>暂停 / 恢复</strong><p>仅在录制会话中生效</p></div><span class="pill">Ctrl + Shift + P</span></div>
         <button class="save-button" type="submit">保存设置</button>
       </form>
     </section>
   </main>
+</div>
+<div id="region-picker" class="region-picker" hidden>
+  <div class="picker-toolbar"><strong>在显示器地图上拖出录制区域</strong><span id="picker-display-name"></span><button id="cancel-region" class="secondary">取消</button><button id="confirm-region" class="save-button" disabled>使用此区域</button></div>
+  <div id="picker-stage" class="picker-stage"><div id="picker-selection" class="picker-selection" hidden><span></span></div></div>
 </div>
 <script src="/app.js"></script>
 </body></html>
