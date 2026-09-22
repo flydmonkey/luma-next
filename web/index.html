@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Luma</title><link rel="stylesheet" href="/app.css"></head>
+<body>
+<div class="app-shell">
+  <aside class="rail" aria-label="页面导航">
+    <div class="brand"><span class="brand-dot"></span><span>Luma</span></div>
+    <nav>
+      <a href="#/" data-route="home"><span>●</span>录制</a>
+      <a href="#/library" data-route="library"><span>▣</span>片库</a>
+      <a href="#/settings" data-route="settings"><span>⚙</span>设置</a>
+    </nav>
+    <div class="engine-state"><i></i><span>本机引擎</span></div>
+  </aside>
+  <main>
+    <section class="page" data-page="home">
+      <header><p class="eyebrow">SCREEN RECORDER</p><h1>录制</h1><p>保持简单，记录此刻。</p></header>
+      <div id="notice" class="notice" hidden></div>
+      <div class="record-status">
+        <div><span id="status-dot" class="status-dot"></span><strong id="status-title">准备就绪</strong><p id="status-summary">主显示器 · 1920 × 1080 · 系统声开启 · 麦克风关闭</p></div>
+        <time id="elapsed">00:00:00</time>
+      </div>
+      <div class="mode-panel">
+        <h2>录制模式</h2>
+        <div class="modes">
+          <button class="mode active" data-mode="display"><b>▰</b><span>显示器</span><small>主显示器</small></button>
+          <button class="mode locked" data-mode="region"><b>⌗</b><span>区域</span><small>尚未接入</small></button>
+          <button class="mode locked" data-mode="window"><b>▢</b><span>窗口</span><small>尚未接入</small></button>
+          <button class="mode locked" data-mode="game"><b>◇</b><span>游戏</span><small>尚未接入</small></button>
+          <button class="mode locked" data-mode="audio"><b>♪</b><span>录音</span><small>尚未接入</small></button>
+        </div>
+      </div>
+      <div class="quick-settings">
+        <div><span>系统声</span><strong>开启</strong><button class="switch on" aria-label="系统声已开启" disabled><i></i></button></div>
+        <div><span>麦克风</span><strong>尚未接入</strong><button class="switch" aria-label="麦克风尚未接入" disabled><i></i></button></div>
+        <div><span>清晰度</span><strong>1080p · 30 fps</strong><span class="pill">x264</span></div>
+      </div>
+      <button id="record-button" class="record-button"><span></span><label>开始录制</label></button>
+      <p class="capability">当前可靠能力：主显示器全屏 + 系统音频，1080p30</p>
+    </section>
+
+    <section class="page" data-page="library" hidden>
+      <header class="row-header"><div><p class="eyebrow">YOUR CAPTURES</p><h1>片库</h1><p>录完的视频会出现在这里。</p></div><button id="open-folder" class="secondary">打开目录</button></header>
+      <div id="library-notice" class="notice" hidden></div>
+      <div class="library-card"><div class="library-head"><span>名称</span><span>大小</span><span>时长</span><span>日期</span><span></span></div><div id="library-list"></div><div id="library-empty" class="empty"><b>▣</b><h2>还没有成片</h2><p>完成一次录制后，它会安全地出现在这里。</p><a href="#/" class="secondary">开始录制</a></div></div>
+    </section>
+
+    <section class="page settings" data-page="settings" hidden>
+      <header><p class="eyebrow">PREFERENCES</p><h1>设置</h1><p>这些设置保存在本机，不会上传。</p></header>
+      <div id="settings-notice" class="notice" hidden></div>
+      <form id="settings-form">
+        <h2>录制</h2>
+        <div class="setting-card"><div><strong>输出目录</strong><p>新录像与片库读取的位置</p></div><input id="output-directory" required></div>
+        <div class="setting-card"><div><strong>系统声</strong><p>M3 录制必须开启</p></div><button class="switch on" disabled><i></i></button></div>
+        <div class="setting-card disabled"><div><strong>麦克风</strong><p>即将支持；当前不会写入麦克风轨道</p></div><button class="switch" disabled><i></i></button></div>
+        <div class="setting-card"><div><strong>清晰度</strong><p>当前稳定编码配置</p></div><select id="quality"><option value="1080p30">1080p · 30 fps · x264</option></select></div>
+        <h2>编码器</h2>
+        <div class="setting-card disabled"><div><strong>硬件加速</strong><p>NVENC / QSV / AMF 将在 M4 接入</p></div><span class="pill">即将支持</span></div>
+        <button class="save-button" type="submit">保存设置</button>
+      </form>
+    </section>
+  </main>
+</div>
+<script src="/app.js"></script>
+</body></html>
