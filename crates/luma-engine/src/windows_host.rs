@@ -55,6 +55,16 @@ pub fn autostart_command(executable: &Path) -> Result<String, String> {
     Ok(command)
 }
 
+pub fn is_development_executable(executable: &Path) -> bool {
+    let components: Vec<_> = executable
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().to_ascii_lowercase())
+        .collect();
+    components
+        .windows(2)
+        .any(|pair| pair[0] == "target" && matches!(pair[1].as_str(), "debug" | "release"))
+}
+
 pub fn install_autostart(executable: &Path) -> Result<String, String> {
     let command = autostart_command(executable)?;
     let key_path = wide(RUN_KEY);
@@ -149,5 +159,15 @@ mod tests {
     #[test]
     fn autostart_rejects_relative_paths() {
         assert!(autostart_command(Path::new("target/debug/luma-engine.exe")).is_err());
+    }
+
+    #[test]
+    fn target_builds_are_identified_as_development_paths() {
+        assert!(is_development_executable(Path::new(
+            r"C:\src\luma-next\target\release\luma-engine.exe"
+        )));
+        assert!(!is_development_executable(Path::new(
+            r"C:\Users\me\AppData\Local\LumaNext\bin\luma-engine.exe"
+        )));
     }
 }

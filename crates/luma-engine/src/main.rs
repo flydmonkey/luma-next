@@ -55,6 +55,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     if args.install_autostart {
         let executable = std::env::current_exe()?;
+        if windows_host::is_development_executable(&executable) {
+            eprintln!(
+                "警告：当前 exe 位于 Cargo target 目录；清理构建产物会破坏自启。推荐运行 scripts/install.ps1 安装到稳定目录。"
+            );
+        }
         let command = windows_host::install_autostart(&executable)
             .map_err(|error| format!("安装开机启动失败：{error}"))?;
         println!(
@@ -88,10 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     };
-    eprintln!(
-        "Initializing embedded libobs from {}",
-        env!("LUMA_OBS_RUNDIR")
-    );
+    eprintln!("Initializing embedded libobs");
     let recorder = luma_engine::ObsRecorder::initialize()
         .map_err(|error| format!("failed to initialize embedded libobs: {error}"))?;
     let engine = Engine::new(recorder);

@@ -81,7 +81,8 @@ unsafe impl Send for ObsRecorder {}
 
 impl ObsRecorder {
     pub fn initialize() -> Result<Self, String> {
-        let root = PathBuf::from(env!("LUMA_OBS_RUNDIR"));
+        let root = resolve_obs_runtime()?;
+        eprintln!("Using OBS runtime from {}", root.display());
         let config = std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
             .unwrap_or_else(std::env::temp_dir)
@@ -205,6 +206,34 @@ impl ObsRecorder {
     }
 }
 
+fn resolve_obs_runtime() -> Result<PathBuf, String> {
+    let root = if let Some(override_path) = std::env::var_os("LUMA_OBS_RUNDIR") {
+        PathBuf::from(override_path)
+    } else {
+        let executable = std::env::current_exe()
+            .map_err(|error| format!("failed to locate luma-engine executable: {error}"))?;
+        let bundled = executable
+            .parent()
+            .and_then(Path::parent)
+            .map(|install_root| install_root.join("obs"));
+        match bundled.filter(|path| is_obs_runtime(path)) {
+            Some(path) => path,
+            None => PathBuf::from(env!("LUMA_OBS_RUNDIR")),
+        }
+    };
+    if !is_obs_runtime(&root) {
+        return Err(format!(
+            "OBS runtime is incomplete at {} (expected data/libobs and obs-plugins/64bit)",
+            root.display()
+        ));
+    }
+    Ok(root)
+}
+
+fn is_obs_runtime(root: &Path) -> bool {
+    root.join("data").join("libobs").is_dir() && root.join("obs-plugins").join("64bit").is_dir()
+}
+
 fn encoder_candidates() -> [(&'static str, &'static str, bool, Option<&'static str>); 5] {
     [
         ("obs_x264", "Software (x264)", false, None),
@@ -312,4 +341,18 @@ fn read_error(buffer: &[c_char]) -> String {
         .to_string_lossy()
         .trim()
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundled_runtime_requires_data_and_plugin_directories() {
+        let directory = tempfile::tempdir().unwrap();
+        assert!(!is_obs_runtime(directory.path()));
+        std::fs::create_dir_all(directory.path().join("data/libobs")).unwrap();
+        std::fs::create_dir_all(directory.path().join("obs-plugins/64bit")).unwrap();
+        assert!(is_obs_runtime(directory.path()));
+    }
 }
