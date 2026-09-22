@@ -7,12 +7,14 @@ param(
     [switch]$SkipM6,
     [string]$WindowTitleSubstring,
     [string]$GameTitleSubstring,
+    [switch]$SkipGameProbe,
     [switch]$EngineAlreadyRunning
 )
 $ErrorActionPreference = 'Stop'
 $baseUrl = 'http://127.0.0.1:18765'
 $engineProcess = $null
 $recording = $false
+$gameProbeProcess = $null
 $repository = Split-Path $PSScriptRoot
 
 function Resolve-Ffprobe {
@@ -74,16 +76,18 @@ function Invoke-RecordingCase([string]$EncoderId, [string]$Label, [bool]$Hardwar
     $mediaSeconds = [double]$probe.format.duration; $sizeBytes = [long]$probe.format.size
     $expectedWall = $wallSeconds-$PauseSeconds
     $tolerance = [Math]::Max(2.5,$expectedWall*0.005)
-    if ($null -eq $video -or $null -eq $audio) { throw 'ffprobe did not find both video and audio streams.' }
+    if ($null -eq $audio -or ($Mode -ne 'audio_only' -and $null -eq $video)) { throw "Unexpected streams for mode ${Mode}: video=$($null -ne $video) audio=$($null -ne $audio)." }
+    if($Mode -eq 'audio_only' -and ($null -eq $video -or $video.width -ne 32 -or $video.height -ne 32)){throw 'Audio-only must contain the documented 32x32 placeholder video.'}
     if ($Mode -eq 'region') { if ($video.width -ne $Region.width -or $video.height -ne $Region.height) { throw "Region resolution mismatch: expected $($Region.width)x$($Region.height), got $($video.width)x$($video.height)." } }
-    elseif ($video.width -lt 640 -or $video.height -lt 360) { throw "Implausible resolution $($video.width)x$($video.height)." }
+    elseif ($Mode -ne 'audio_only' -and ($video.width -lt 640 -or $video.height -lt 360)) { throw "Implausible resolution $($video.width)x$($video.height)." }
     if ($sizeBytes -lt 102400) { throw "Output is suspiciously small: $sizeBytes bytes." }
     if ($mediaSeconds -lt 1 -or [Math]::Abs($mediaSeconds-$expectedWall) -gt $tolerance) { throw "Duration mismatch: media=$mediaSeconds active-wall=$expectedWall tolerance=$tolerance." }
     $obsMedia=[double]$stop.media_elapsed_seconds; $uiMedia=[double]$stop.elapsed_seconds; $liveMedia=[double]$live.media_elapsed_seconds
     if([Math]::Abs($obsMedia-$mediaSeconds) -ge 1.5){throw "OBS media/ffprobe mismatch: obs=$obsMedia ffprobe=$mediaSeconds."}
     if([Math]::Abs($uiMedia-$mediaSeconds) -ge 1.0){throw "Stopped UI timer disagreed with ffprobe: ui=$uiMedia ffprobe=$mediaSeconds."}
     Write-Host "[$Label] PASS: $outputPath" -ForegroundColor Green
-    Write-Host ("[$Label] {0}x{1} {2}, ffprobe {3:N2}s, OBS media {4:N2}s, stopped UI {5:N2}s, pre-stop live {6:N2}s, OBS wall {7:N2}s, {8:N0} bytes; active={9}, fallback={10}" -f $video.width,$video.height,$video.codec_name,$mediaSeconds,$obsMedia,$uiMedia,$liveMedia,$stop.wall_elapsed_seconds,$sizeBytes,$stop.encoder_active,$stop.encoder_fallback)
+    $mediaDescription=if($Mode -eq 'audio_only'){"audio-only $($audio.codec_name)"}else{"$($video.width)x$($video.height) $($video.codec_name)"}
+    Write-Host ("[$Label] {0}, ffprobe {1:N2}s, OBS media {2:N2}s, stopped UI {3:N2}s, pre-stop live {4:N2}s, OBS wall {5:N2}s, {6:N0} bytes; active={7}, fallback={8}" -f $mediaDescription,$mediaSeconds,$obsMedia,$uiMedia,$liveMedia,$stop.wall_elapsed_seconds,$sizeBytes,$stop.encoder_active,$stop.encoder_fallback)
 }
 
 try {
@@ -107,6 +111,7 @@ try {
         $inputs=@((Invoke-LumaApi '/api/v1/devices/audio').inputs)
         if($inputs.Count -eq 0){Write-Host '[microphone] SKIP: OBS/WASAPI reported no input device.' -ForegroundColor Yellow}else{Invoke-RecordingCase 'obs_x264' 'microphone' $false 'display' '' $true $true}
     }
+    Invoke-RecordingCase 'obs_x264' 'audio-only' $false 'audio_only' '' $true $false
     if($WindowTitleSubstring){
         $windows=@((Invoke-LumaApi '/api/v1/targets').windows)
         $window=$windows|Where-Object {$_.available -and $_.title -like "*$WindowTitleSubstring*"}|Select-Object -First 1
@@ -121,17 +126,25 @@ try {
         Invoke-RecordingCase 'obs_x264' 'pause' $false 'display' '' $true $false $primary.id $null 5
         if($displays.Count -lt 2){Write-Host '[multi-monitor] SKIP: only one display is connected.' -ForegroundColor Yellow}else{Invoke-RecordingCase 'obs_x264' 'secondary-display' $false 'display' '' $true $false $displays[1].id}
     }
+    if(-not $GameTitleSubstring -and -not $SkipGameProbe){
+        & cargo.exe build -p luma-game-capture-probe
+        if($LASTEXITCODE -ne 0){throw 'Failed to build the DX11 game-capture probe.'}
+        $gameProbeProcess=Start-Process (Join-Path $repository 'target\debug\luma-game-capture-probe.exe') -PassThru
+        $GameTitleSubstring='Luma DX11 Game Capture Probe'
+        Start-Sleep -Seconds 2
+    }
     if($GameTitleSubstring){
         $games=@((Invoke-LumaApi '/api/v1/targets').games)
         $game=$games|Where-Object {$_.available -and $_.title -like "*$GameTitleSubstring*"}|Select-Object -First 1
         if($null -eq $game){throw "No OBS game_capture candidate title contains '$GameTitleSubstring'."}
         Invoke-RecordingCase 'obs_x264' 'game-pause' $false 'game' '' $true $false 'primary' $null 5 $game.id
     } else {
-        Write-Host '[game] SKIP: no compatible DirectX/OpenGL/Vulkan target was requested; pass -GameTitleSubstring to require a real OBS game_capture run.' -ForegroundColor Yellow
+        Write-Host '[game] SKIP: DX11 probe was disabled and no compatible game target was requested.' -ForegroundColor Yellow
     }
 } catch {
     if($recording){try{$null=Invoke-LumaApi '/api/v1/session/stop' 'POST'}catch{}}
     Write-Error $_; exit 1
 } finally {
     if($null -ne $engineProcess -and -not $engineProcess.HasExited){Stop-Process -Id $engineProcess.Id -Force}
+    if($null -ne $gameProbeProcess -and -not $gameProbeProcess.HasExited){Stop-Process -Id $gameProbeProcess.Id}
 }
