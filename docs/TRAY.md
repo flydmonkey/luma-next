@@ -14,6 +14,9 @@ cargo run -p luma-engine -- --open-ui
 
 # CI、录制回归或无交互桌面会话
 cargo run -p luma-engine -- --no-tray
+
+# 保留托盘，但不注册全局热键
+cargo run -p luma-engine -- --no-hotkeys
 ```
 
 端口仍默认为 `127.0.0.1:18765`，并支持原有 `--bind`、`--port`。即便修改端口，
@@ -68,6 +71,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\uninstall.ps1
 - **打开控制页**：调用 Windows 默认浏览器打开 localhost WebUI。
 - **开始录制 / 停止录制**：同一个菜单项随共享 session 立即切换；开始使用当前
   settings，停止执行完整 ffprobe 诚实校验。
+- **暂停录制 / 恢复录制**：录制中可用；暂停时媒体计时冻结，仍可直接停止。
 - **状态**：只读显示空闲、录制 elapsed/目标摘要/实际编码器、最近错误或最近输出路径。
 - **退出**：若正在录制，先同步 stop 并验证；失败会写明日志并保留 session error，
   随后退出，不会假报保存成功。
@@ -75,6 +79,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\uninstall.ps1
 托盘线程负责 Win32 消息泵。start/stop 从菜单派发到工作线程，因此录制初始化不会
 卡死托盘消息；菜单每 200ms 从引擎同一 session 数据源刷新，不通过 obs-websocket
 或第二个 HTTP 后端猜状态。录制时图标变为红色。
+
+默认全局热键是 `Ctrl+Shift+R`（开始/停止）和 `Ctrl+Shift+P`（暂停/恢复）。注册失败
+会在日志中说明组合键可能被占用，不会静默宣称可用。`--no-tray` 同时禁用热键；
+`--no-hotkeys` 只禁用热键。详见 [M6.md](M6.md)。
 
 ## 与旧壳的差异
 

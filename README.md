@@ -99,6 +99,8 @@ curl.exe -X POST http://127.0.0.1:18765/api/v1/session/stop
 powershell -ExecutionPolicy Bypass -File .\scripts\record-regression.ps1
 # 要求硬编存在且不得降级
 powershell -ExecutionPolicy Bypass -File .\scripts\record-regression.ps1 -Encoder amf -RequireHw
+# 跳过区域 / 暂停 / 多屏 M6 用例
+powershell -ExecutionPolicy Bypass -File .\scripts\record-regression.ps1 -SkipM6
 ```
 
 脚本优先使用已安装包或 `dist` 中的 ffprobe，再回退 PATH，并独立检查音视频流、分辨率、文件大小以及媒体/墙钟时长。硬案例建议
@@ -121,7 +123,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\uninstall.ps1
 ```
 
-菜单提供打开控制页、开始/停止录制、状态和退出；录制动作与 HTTP 共用同一份 session
+菜单提供打开控制页、开始/停止、暂停/恢复、状态和退出；默认全局热键为
+`Ctrl+Shift+R` 与 `Ctrl+Shift+P`。录制动作与 HTTP 共用同一份 session
 状态及 stop 校验。项目不再包含 WebView2 桌面壳，也不依赖 WebView2 Runtime。详见
 [托盘说明](docs/TRAY.md)。
 
@@ -156,6 +159,7 @@ curl.exe -X DELETE http://127.0.0.1:18765/api/v1/library/luma-123.mkv
 | M3 | library / settings 持久化与回归脚本（完成） |
 | M4 | 硬编探测/选择 + 诚实 x264 降级/遥测（完成） |
 | M5 | 麦克风混音 + OBS WGC 窗口捕获（完成） |
+| M6 | 区域 + 多显示器 + 暂停/恢复 + 全局热键（完成） |
 
 ## 相关文档
 
@@ -168,6 +172,7 @@ curl.exe -X DELETE http://127.0.0.1:18765/api/v1/library/luma-123.mkv
 - [WebUI 迁移说明](docs/WEBUI.md)
 - [M4 硬件编码](docs/M4.md)
 - [M5 麦克风与窗口捕获](docs/M5.md)
+- [M6 区域、多显示器、暂停与热键](docs/M6.md)
 - [录制计时口径](docs/TIMING.md)
 - [Windows 托盘](docs/TRAY.md)
 - [安装与发布](docs/INSTALL.md)
