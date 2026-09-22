@@ -62,8 +62,15 @@ $gh=(Get-Command gh.exe -ErrorAction SilentlyContinue).Source
 if(-not $gh){throw 'GitHub CLI (gh) is required. Install it, then run gh auth login or set GH_TOKEN/GITHUB_TOKEN.'}
 & $gh auth status *> $null
 if($LASTEXITCODE -ne 0 -and -not $env:GH_TOKEN -and -not $env:GITHUB_TOKEN){throw 'GitHub authentication is missing. Run gh auth login or set GH_TOKEN/GITHUB_TOKEN with repo scope.'}
+# A missing release is the expected create path. Windows PowerShell promotes a
+# native program's stderr to an ErrorRecord when ErrorActionPreference is Stop,
+# so briefly relax it and decide from gh's exit code instead.
+$savedErrorActionPreference=$ErrorActionPreference
+$ErrorActionPreference='Continue'
 $existingJson=& $gh release view $Tag -R $Repo --json isDraft,url 2>$null
-if($LASTEXITCODE -eq 0){
+$viewExitCode=$LASTEXITCODE
+$ErrorActionPreference=$savedErrorActionPreference
+if($viewExitCode -eq 0){
     $existing=$existingJson|ConvertFrom-Json
     if(-not $existing.isDraft){throw "Release $Tag already exists and is published: $($existing.url). Refusing to overwrite it."}
     if(-not $ReplaceDraft){throw "Draft release $Tag already exists: $($existing.url). Pass -ReplaceDraft to replace only that draft."}
