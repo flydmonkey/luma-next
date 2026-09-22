@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
     [string]$ObsRundir = $(if ($env:LUMA_OBS_RUNDIR) { $env:LUMA_OBS_RUNDIR } else { 'C:\Users\Administrator\Projects\obs-studio\build_x64\rundir\RelWithDebInfo' }),
-    [switch]$NoZip
+    [switch]$NoZip,
+    [switch]$Sign,
+    [switch]$SkipFfplay
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot
@@ -65,10 +67,15 @@ Get-ChildItem -LiteralPath $obsPlugins -File | Where-Object Extension -eq '.dll'
 Copy-Item -LiteralPath $obsData -Destination $obsDestination.FullName -Recurse
 Copy-Item -LiteralPath $obsLicense -Destination (Join-Path $packageRoot 'LICENSE-OBS-GPL.txt')
 foreach ($tool in @('ffmpeg.exe', 'ffprobe.exe', 'ffplay.exe')) {
+    if ($SkipFfplay -and $tool -eq 'ffplay.exe') { continue }
     $source = Join-Path $ffmpegBin $tool
     if (Test-Path -LiteralPath $source -PathType Leaf) { Copy-Item -LiteralPath $source -Destination $binDestination.FullName }
 }
 Copy-Item -LiteralPath $ffmpegLicense -Destination (Join-Path $packageRoot 'LICENSE-FFMPEG.txt')
+if ($Sign) {
+    & (Join-Path $PSScriptRoot 'sign.ps1') -File (Join-Path $binDestination.FullName 'luma-engine.exe')
+    if ($LASTEXITCODE -ne 0) { throw 'sign.ps1 failed.' }
+}
 
 $readme = @"
 Luma Next $version

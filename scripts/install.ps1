@@ -18,7 +18,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $PackagePath 'obs\obs-plugins\64bit'
 
 $installRoot = Join-Path $env:LOCALAPPDATA 'LumaNext'
 $installedEngine = Join-Path $installRoot 'bin\luma-engine.exe'
-$running = @(Get-Process -Name 'luma-engine' -ErrorAction SilentlyContinue | Where-Object { $_.Path -and [System.IO.Path]::GetFullPath($_.Path) -eq [System.IO.Path]::GetFullPath($installedEngine) })
+$running = @(Get-Process -Name 'luma-engine' -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -and [System.IO.Path]::GetFullPath($_.Path) -eq [System.IO.Path]::GetFullPath($installedEngine) } catch { $false } })
 if ($running.Count -gt 0) { throw 'Installed Luma Next is running. Exit it from the tray before installing; the installer will not force-kill it.' }
 
 $stage = Join-Path $env:LOCALAPPDATA 'LumaNext-package-staging'
