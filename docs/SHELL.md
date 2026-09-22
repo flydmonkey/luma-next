@@ -15,6 +15,9 @@ cargo run -p luma-engine
 cargo run -p luma-shell
 ```
 
+联调时先在浏览器或 `curl.exe http://127.0.0.1:18765/` 确认最小 WebUI 可访问，
+再启动壳；壳探测到端口后会把该页面装入内容区。
+
 当前仓库若尚未包含 `luma-engine`，可直接运行壳检查离线状态：
 
 ```powershell

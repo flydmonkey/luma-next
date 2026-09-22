@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Luma Next</title>
+  <style>
+    :root { font-family: "Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif; color: #1b1b1b; background: #fff; }
+    * { box-sizing: border-box; }
+    body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 32px; }
+    main { width: min(520px, 100%); }
+    .status { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; color: #256d1b; font-size: 13px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #2d7d21; }
+    h1 { margin: 0 0 8px; font-size: 28px; font-weight: 600; letter-spacing: -.02em; }
+    p { margin: 0 0 24px; color: #666; font-size: 14px; line-height: 1.6; }
+    pre { margin: 0; padding: 14px 16px; overflow: auto; border: 1px solid #e5e5e5; border-radius: 8px; background: #fafafa; color: #444; font: 12px/1.6 "Cascadia Mono", Consolas, monospace; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="status"><span class="dot"></span>本机引擎已连接</div>
+    <h1>Luma Next</h1>
+    <p>M0 HTTP 控制面运行正常。真实录制将在 M1 接入。</p>
+    <pre id="session">正在读取会话…</pre>
+  </main>
+  <script>
+    fetch('/api/v1/session')
+      .then(response => response.json())
+      .then(value => { document.getElementById('session').textContent = JSON.stringify(value, null, 2); })
+      .catch(error => { document.getElementById('session').textContent = `会话读取失败：${error}`; });
+  </script>
+</body>
+</html>

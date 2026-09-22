@@ -1,4 +1,4 @@
-use axum::{Json, Router, routing::get};
+use axum::{Json, Router, response::Html, routing::get};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -23,8 +23,13 @@ struct Session {
 
 pub fn app() -> Router {
     Router::new()
+        .route("/", get(index))
         .route("/api/v1", get(probe))
         .route("/api/v1/session", get(session))
+}
+
+async fn index() -> Html<&'static str> {
+    Html(include_str!("index.html"))
 }
 
 async fn probe() -> Json<Envelope<Probe>> {
