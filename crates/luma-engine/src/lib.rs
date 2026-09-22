@@ -19,9 +19,12 @@ use std::{
 };
 
 pub use recorder::{
-    AudioDeviceInfo, CaptureOptions, CaptureTarget, EncoderInfo, ObsRecorder, RecordingValidation,
+    AudioDeviceInfo, CaptureOptions, CaptureRegion, CaptureTarget, DisplayTarget, EncoderInfo,
+    ObsRecorder, RecordingValidation,
 };
-use settings::{Settings, SettingsStore, default_output_directory, default_settings_path};
+use settings::{
+    RegionSettings, Settings, SettingsStore, default_output_directory, default_settings_path,
+};
 
 #[derive(Serialize)]
 struct Envelope<T> {
@@ -54,6 +57,9 @@ struct Session {
     microphone: bool,
     audio_sources_active: Vec<String>,
     warning: Option<String>,
+    paused: bool,
+    display_id: Option<String>,
+    region: Option<RegionSettings>,
 }
 impl Default for Session {
     fn default() -> Self {
@@ -75,6 +81,9 @@ impl Default for Session {
             microphone: false,
             audio_sources_active: Vec::new(),
             warning: None,
+            paused: false,
+            display_id: None,
+            region: None,
         }
     }
 }
@@ -86,7 +95,7 @@ impl Session {
 
 fn session_snapshot(controller: &Controller) -> Session {
     let mut session = controller.session.snapshot();
-    if session.state == "recording" {
+    if matches!(session.state, "recording" | "paused") {
         if let Some(recorder) = controller.recorder.as_ref() {
             let (media, wall) = recorder.elapsed();
             apply_elapsed(&mut session, media, wall);
@@ -167,6 +176,13 @@ impl Engine {
             .map_err(|(_, error)| error)
     }
 
+    pub fn pause(&self, pause: bool) -> Result<TrayStatus, String> {
+        let mut controller = self.state.lock().expect("controller mutex poisoned");
+        pause_locked(&mut controller, pause)
+            .map(|_| self.tray_status_from_locked(&controller))
+            .map_err(|(_, error)| error)
+    }
+
     fn tray_status_from_locked(&self, controller: &Controller) -> TrayStatus {
         let session = session_snapshot(controller);
         TrayStatus {
@@ -218,6 +234,7 @@ fn router_with_state(state: AppState) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/app.css", get(styles))
+        .route("/m6.css", get(m6_styles))
         .route("/app.js", get(script))
         .route("/dev", get(dev_index))
         .route("/api/v1", get(probe))
@@ -227,6 +244,8 @@ fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/session", get(session))
         .route("/api/v1/session/start", post(start_recording))
         .route("/api/v1/session/stop", post(stop_recording))
+        .route("/api/v1/session/pause", post(pause_recording))
+        .route("/api/v1/session/resume", post(resume_recording))
         .route("/api/v1/library", get(library))
         .route("/api/v1/library/open", post(open_library))
         .route("/api/v1/library/{id}", delete(delete_library_item))
@@ -244,6 +263,12 @@ async fn styles() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
         include_str!("../../../web/app.css"),
+    )
+}
+async fn m6_styles() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
+        include_str!("../../../web/m6.css"),
     )
 }
 async fn script() -> impl IntoResponse {
@@ -280,7 +305,7 @@ async fn encoders(State(state): State<AppState>) -> Response {
 }
 #[derive(Serialize)]
 struct Targets {
-    displays: Vec<Value>,
+    displays: Vec<DisplayTarget>,
     windows: Vec<CaptureTarget>,
 }
 async fn targets(State(state): State<AppState>) -> Response {
@@ -292,9 +317,7 @@ async fn targets(State(state): State<AppState>) -> Response {
         );
     };
     success_response(Targets {
-        displays: vec![
-            serde_json::json!({"id":"primary","name":"主显示器","primary":true,"available":true}),
-        ],
+        displays: recorder.displays(),
         windows: recorder.windows(),
     })
 }
@@ -343,6 +366,8 @@ struct StartRequest {
     encoder: Option<String>,
     window_id: Option<String>,
     mic_device_id: Option<String>,
+    display_id: Option<String>,
+    region: Option<RegionSettings>,
 }
 
 async fn start_recording(State(state): State<AppState>, body: axum::body::Bytes) -> Response {
@@ -370,7 +395,7 @@ fn start_locked(
     controller: &mut Controller,
     request: StartRequest,
 ) -> Result<Session, (StatusCode, String)> {
-    if controller.session.state == "recording" {
+    if matches!(controller.session.state, "recording" | "paused") {
         return Err((StatusCode::CONFLICT, "recording is already active".into()));
     }
     let configured = controller.settings.current().clone();
@@ -380,10 +405,10 @@ fn start_locked(
         .unwrap_or(configured.record_system_audio);
     let microphone = request.microphone.unwrap_or(configured.record_microphone);
     let quality = request.quality.as_deref().unwrap_or(&configured.quality);
-    if !matches!(mode, "display" | "window") {
+    if !matches!(mode, "display" | "window" | "region") {
         return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
-            "only display and window capture are implemented".into(),
+            "only display, window, and region capture are implemented".into(),
         ));
     }
     if !system_audio && !microphone {
@@ -406,6 +431,8 @@ fn start_locked(
     }
     let requested_encoder = request.encoder.unwrap_or(configured.encoder);
     let window_id = request.window_id.or(configured.window_id);
+    let display_id = request.display_id.unwrap_or(configured.display_id);
+    let region = request.region.or(configured.region);
     let mic_device_id = request.mic_device_id.unwrap_or(configured.mic_device_id);
     let available = controller.recorder.as_ref().is_some_and(|recorder| {
         recorder
@@ -437,6 +464,46 @@ fn start_locked(
             ));
         }
     }
+    let displays = controller
+        .recorder
+        .as_ref()
+        .map_or_else(Vec::new, ObsRecorder::displays);
+    let display = if mode == "window" {
+        None
+    } else if display_id == "primary" {
+        displays.iter().find(|item| item.primary)
+    } else {
+        displays.iter().find(|item| item.id == display_id)
+    };
+    if mode != "window" && display.is_none() {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "display_id is unavailable".into(),
+        ));
+    }
+    if mode == "region" {
+        let Some(region) = region else {
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "region is required".into(),
+            ));
+        };
+        let display = display.expect("display checked above");
+        let right = i64::from(region.x) + i64::from(region.width);
+        let bottom = i64::from(region.y) + i64::from(region.height);
+        if region.width < 32
+            || region.height < 32
+            || region.x < display.x
+            || region.y < display.y
+            || right > i64::from(display.x) + i64::from(display.width)
+            || bottom > i64::from(display.y) + i64::from(display.height)
+        {
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "region must be at least 32x32 and remain inside the selected display".into(),
+            ));
+        }
+    }
     if microphone {
         let listed = controller.recorder.as_ref().is_some_and(|recorder| {
             recorder
@@ -464,8 +531,14 @@ fn start_locked(
             .into_iter()
             .find(|item| Some(item.id.as_str()) == window_id.as_deref())
             .map_or_else(|| "窗口".into(), |item| item.title)
+    } else if mode == "region" {
+        let region = region.expect("region checked above");
+        format!(
+            "区域 {}×{} @ {},{}",
+            region.width, region.height, region.x, region.y
+        )
     } else {
-        "主显示器".into()
+        display.map_or_else(|| "显示器".into(), |item| item.name.clone())
     };
     match recorder.start(
         &output_directory,
@@ -473,6 +546,16 @@ fn start_locked(
         CaptureOptions {
             mode,
             window_id: window_id.as_deref(),
+            display,
+            region: region.map(|value| {
+                let display = display.expect("region display checked above");
+                CaptureRegion {
+                    x: value.x - display.x,
+                    y: value.y - display.y,
+                    width: value.width & !1,
+                    height: value.height & !1,
+                }
+            }),
             system_audio,
             microphone,
             mic_device_id: Some(&mic_device_id),
@@ -506,6 +589,9 @@ fn start_locked(
                 warning: (mode == "window").then_some(
                     "目标窗口最小化或关闭后画面可能变黑；请停止录制并重新选择窗口".into(),
                 ),
+                paused: false,
+                display_id: display.map(|item| item.id.clone()),
+                region,
             };
             Ok(session_snapshot(controller))
         }
@@ -526,7 +612,7 @@ async fn stop_recording(State(state): State<AppState>) -> Response {
 }
 
 fn stop_locked(controller: &mut Controller) -> Result<Session, (StatusCode, String)> {
-    if controller.session.state != "recording" {
+    if !matches!(controller.session.state, "recording" | "paused") {
         return Err((StatusCode::CONFLICT, "no recording is active".into()));
     }
     let Some(recorder) = controller.recorder.as_mut() else {
@@ -541,6 +627,7 @@ fn stop_locked(controller: &mut Controller) -> Result<Session, (StatusCode, Stri
             controller.session.elapsed_seconds = validation.duration_seconds;
             controller.session.media_elapsed_seconds = validation.media_seconds;
             controller.session.wall_elapsed_seconds = validation.wall_seconds;
+            controller.session.paused = false;
             controller.session.output_path = Some(path.to_string_lossy().into_owned());
             controller.session.validation = Some(validation);
             controller.session.error = None;
@@ -552,6 +639,47 @@ fn stop_locked(controller: &mut Controller) -> Result<Session, (StatusCode, Stri
             Err((StatusCode::INTERNAL_SERVER_ERROR, error))
         }
     }
+}
+
+async fn pause_recording(State(state): State<AppState>) -> Response {
+    change_pause_state(state, true)
+}
+
+async fn resume_recording(State(state): State<AppState>) -> Response {
+    change_pause_state(state, false)
+}
+
+fn change_pause_state(state: AppState, pause: bool) -> Response {
+    let mut controller = state.lock().expect("controller mutex poisoned");
+    match pause_locked(&mut controller, pause) {
+        Ok(session) => success_response(session),
+        Err((status, error)) => error_response(status, error),
+    }
+}
+
+fn pause_locked(controller: &mut Controller, pause: bool) -> Result<Session, (StatusCode, String)> {
+    let expected = if pause { "recording" } else { "paused" };
+    if controller.session.state != expected {
+        return Err((
+            StatusCode::CONFLICT,
+            if pause {
+                "only an active recording can be paused"
+            } else {
+                "recording is not paused"
+            }
+            .into(),
+        ));
+    }
+    let recorder = controller.recorder.as_mut().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "libobs recorder is not initialized".into(),
+    ))?;
+    recorder
+        .pause(pause)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    controller.session.state = if pause { "paused" } else { "recording" };
+    controller.session.paused = pause;
+    Ok(session_snapshot(controller))
 }
 
 #[derive(Serialize)]

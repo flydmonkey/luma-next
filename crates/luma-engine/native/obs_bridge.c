@@ -18,7 +18,50 @@ struct luma_obs {
     obs_encoder_t *video_encoder;
     obs_encoder_t *audio_encoder;
     ULONGLONG recording_started_ms;
+    ULONGLONG pause_started_ms;
+    ULONGLONG paused_total_ms;
 };
+
+struct display_list {
+    char *buffer;
+    size_t size;
+    size_t written;
+};
+
+static BOOL CALLBACK append_display(HMONITOR handle, HDC dc, LPRECT rect, LPARAM parameter)
+{
+    (void)dc;
+    struct display_list *list = (struct display_list *)parameter;
+    MONITORINFOEXA monitor = {0};
+    monitor.cbSize = sizeof(monitor);
+    if (!GetMonitorInfoA(handle, (LPMONITORINFO)&monitor)) return TRUE;
+    DISPLAY_DEVICEA device = {0};
+    device.cb = sizeof(device);
+    const char *id = monitor.szDevice;
+    const char *name = monitor.szDevice;
+    if (EnumDisplayDevicesA(monitor.szDevice, 0, &device, EDD_GET_DEVICE_INTERFACE_NAME)) {
+        if (device.DeviceID[0]) id = device.DeviceID;
+        if (device.DeviceString[0]) name = device.DeviceString;
+    }
+    int result = snprintf(list->buffer + list->written, list->size - list->written,
+                          "%s\t%s\t%ld\t%ld\t%ld\t%ld\t%d\n", id, name,
+                          rect->left, rect->top, rect->right - rect->left,
+                          rect->bottom - rect->top,
+                          (monitor.dwFlags & MONITORINFOF_PRIMARY) != 0);
+    if (result < 0 || (size_t)result >= list->size - list->written) return FALSE;
+    list->written += (size_t)result;
+    return TRUE;
+}
+
+size_t luma_obs_list_displays(struct luma_obs *ctx, char *buffer, size_t buffer_size)
+{
+    (void)ctx;
+    if (!buffer || !buffer_size) return 0;
+    buffer[0] = 0;
+    struct display_list list = {buffer, buffer_size, 0};
+    EnumDisplayMonitors(NULL, NULL, append_display, (LPARAM)&list);
+    return list.written;
+}
 
 struct primary_display {
     char id[128];
@@ -259,6 +302,9 @@ size_t luma_obs_list_property(struct luma_obs *ctx, const char *source_id, const
 }
 
 static bool configure_sources(struct luma_obs *ctx, const char *mode, const char *target,
+                              uint32_t display_width, uint32_t display_height,
+                              int32_t region_x, int32_t region_y,
+                              uint32_t region_width, uint32_t region_height,
                               bool system_audio, bool microphone, const char *mic_device,
                               char *error, size_t error_size)
 {
@@ -282,6 +328,24 @@ static bool configure_sources(struct luma_obs *ctx, const char *mode, const char
             set_error(error, error_size, "failed to add window capture to scene");
             release_dynamic_sources(ctx);
             return false;
+        }
+    } else {
+        obs_data_t *settings = obs_data_create();
+        obs_data_set_int(settings, "method", 2);
+        obs_data_set_string(settings, "monitor_id", target);
+        obs_data_set_bool(settings, "capture_cursor", true);
+        obs_source_update(ctx->monitor, settings);
+        obs_data_release(settings);
+        if (strcmp(mode, "region") == 0) {
+            struct obs_sceneitem_crop crop = {0};
+            crop.left = region_x;
+            crop.top = region_y;
+            crop.right = (int)display_width - region_x - (int)region_width;
+            crop.bottom = (int)display_height - region_y - (int)region_height;
+            obs_sceneitem_set_crop(ctx->visual_item, &crop);
+        } else {
+            struct obs_sceneitem_crop crop = {0};
+            obs_sceneitem_set_crop(ctx->visual_item, &crop);
         }
     }
     if (system_audio) obs_set_output_source(1, ctx->desktop_audio);
@@ -353,6 +417,8 @@ static bool start_with_encoder(struct luma_obs *ctx, const char *path, const cha
         return false;
     }
     ctx->recording_started_ms = GetTickCount64();
+    ctx->pause_started_ms = 0;
+    ctx->paused_total_ms = 0;
     Sleep(750);
     if (!obs_output_active(ctx->output)) {
         const char *last_error = obs_output_get_last_error(ctx->output);
@@ -364,7 +430,11 @@ static bool start_with_encoder(struct luma_obs *ctx, const char *path, const cha
 }
 
 bool luma_obs_start(struct luma_obs *ctx, const char *path, const char *requested,
-                    const char *mode, const char *target, bool system_audio, bool microphone,
+                    const char *mode, const char *target,
+                    uint32_t display_width, uint32_t display_height,
+                    int32_t region_x, int32_t region_y,
+                    uint32_t region_width, uint32_t region_height,
+                    bool system_audio, bool microphone,
                     const char *mic_device,
                     char *active, size_t active_size, char *fallback, size_t fallback_size,
                     char *error, size_t error_size)
@@ -373,7 +443,40 @@ bool luma_obs_start(struct luma_obs *ctx, const char *path, const char *requeste
         set_error(error, error_size, "recording is already active");
         return false;
     }
-    if (!configure_sources(ctx, mode, target, system_audio, microphone, mic_device, error, error_size))
+    uint32_t base_width = strcmp(mode, "region") == 0 ? region_width : display_width;
+    uint32_t base_height = strcmp(mode, "region") == 0 ? region_height : display_height;
+    if (strcmp(mode, "window") != 0 && base_width && base_height) {
+        struct obs_video_info video = {0};
+        video.graphics_module = "libobs-d3d11.dll";
+        video.fps_num = 30;
+        video.fps_den = 1;
+        video.base_width = base_width & ~1U;
+        video.base_height = base_height & ~1U;
+        video.output_width = video.base_width;
+        video.output_height = video.base_height;
+        if (strcmp(mode, "display") == 0 && (video.output_width > 1920 || video.output_height > 1080)) {
+            double scale_x = 1920.0 / (double)video.output_width;
+            double scale_y = 1080.0 / (double)video.output_height;
+            double scale = scale_x < scale_y ? scale_x : scale_y;
+            video.output_width = ((uint32_t)(video.output_width * scale)) & ~1U;
+            video.output_height = ((uint32_t)(video.output_height * scale)) & ~1U;
+        }
+        video.output_format = VIDEO_FORMAT_NV12;
+        video.gpu_conversion = true;
+        video.colorspace = VIDEO_CS_709;
+        video.range = VIDEO_RANGE_PARTIAL;
+        video.scale_type = OBS_SCALE_BICUBIC;
+        int result = obs_reset_video(&video);
+        if (result != OBS_VIDEO_SUCCESS) {
+            char message[256];
+            snprintf(message, sizeof(message), "obs_reset_video for capture target failed (code %d)", result);
+            set_error(error, error_size, message);
+            return false;
+        }
+    }
+    if (!configure_sources(ctx, mode, target, display_width, display_height,
+                           region_x, region_y, region_width, region_height,
+                           system_audio, microphone, mic_device, error, error_size))
         return false;
     char first_error[2048] = {0};
     const char *forced_failure = getenv("LUMA_FORCE_ENCODER_FAILURE");
@@ -409,7 +512,33 @@ double luma_obs_media_seconds(struct luma_obs *ctx)
 double luma_obs_wall_seconds(struct luma_obs *ctx)
 {
     if (!ctx || !ctx->recording_started_ms) return 0.0;
-    return (double)(GetTickCount64() - ctx->recording_started_ms) / 1000.0;
+    ULONGLONG now = GetTickCount64();
+    ULONGLONG current_pause = ctx->pause_started_ms ? now - ctx->pause_started_ms : 0;
+    return (double)(now - ctx->recording_started_ms - ctx->paused_total_ms - current_pause) / 1000.0;
+}
+
+bool luma_obs_pause(struct luma_obs *ctx, bool pause, char *error, size_t error_size)
+{
+    if (!ctx || !ctx->output || !obs_output_active(ctx->output)) {
+        set_error(error, error_size, "no active OBS output to pause");
+        return false;
+    }
+    if ((obs_output_get_flags(ctx->output) & OBS_OUTPUT_CAN_PAUSE) == 0) {
+        set_error(error, error_size, "the active OBS output does not support pause");
+        return false;
+    }
+    if (!obs_output_pause(ctx->output, pause)) {
+        set_error(error, error_size, pause ? "OBS rejected pause" : "OBS rejected resume");
+        return false;
+    }
+    ULONGLONG now = GetTickCount64();
+    if (pause) {
+        ctx->pause_started_ms = now;
+    } else if (ctx->pause_started_ms) {
+        ctx->paused_total_ms += now - ctx->pause_started_ms;
+        ctx->pause_started_ms = 0;
+    }
+    return true;
 }
 
 bool luma_obs_stop(struct luma_obs *ctx, uint32_t *encoded_frames, uint64_t *total_bytes,
@@ -447,6 +576,8 @@ bool luma_obs_stop(struct luma_obs *ctx, uint32_t *encoded_frames, uint64_t *tot
     release_recording(ctx);
     release_dynamic_sources(ctx);
     ctx->recording_started_ms = 0;
+    ctx->pause_started_ms = 0;
+    ctx->paused_total_ms = 0;
     return true;
 }
 

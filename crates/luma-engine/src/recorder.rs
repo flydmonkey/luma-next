@@ -26,6 +26,12 @@ unsafe extern "C" {
         requested: *const c_char,
         mode: *const c_char,
         target: *const c_char,
+        display_width: u32,
+        display_height: u32,
+        region_x: i32,
+        region_y: i32,
+        region_width: u32,
+        region_height: u32,
         system_audio: bool,
         microphone: bool,
         mic_device: *const c_char,
@@ -44,6 +50,17 @@ unsafe extern "C" {
         buffer: *mut c_char,
         buffer_size: usize,
     ) -> usize;
+    fn luma_obs_list_displays(
+        context: *mut c_void,
+        buffer: *mut c_char,
+        buffer_size: usize,
+    ) -> usize;
+    fn luma_obs_pause(
+        context: *mut c_void,
+        pause: bool,
+        error: *mut c_char,
+        error_size: usize,
+    ) -> bool;
     fn luma_obs_stop(
         context: *mut c_void,
         encoded_frames: *mut u32,
@@ -98,9 +115,31 @@ pub struct AudioDeviceInfo {
     pub is_default: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct DisplayTarget {
+    pub id: String,
+    pub name: String,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub primary: bool,
+    pub available: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CaptureRegion {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
 pub struct CaptureOptions<'a> {
     pub mode: &'a str,
     pub window_id: Option<&'a str>,
+    pub display: Option<&'a DisplayTarget>,
+    pub region: Option<CaptureRegion>,
     pub system_audio: bool,
     pub microphone: bool,
     pub mic_device_id: Option<&'a str>,
@@ -198,6 +237,33 @@ impl ObsRecorder {
             .collect()
     }
 
+    pub fn displays(&self) -> Vec<DisplayTarget> {
+        let mut buffer = vec![0_i8; 64 * 1024];
+        let written = unsafe {
+            luma_obs_list_displays(self.context.as_ptr(), buffer.as_mut_ptr(), buffer.len())
+        };
+        let bytes = unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), written) };
+        String::from_utf8_lossy(bytes)
+            .lines()
+            .filter_map(|line| {
+                let fields: Vec<_> = line.split('\t').collect();
+                if fields.len() != 7 {
+                    return None;
+                }
+                Some(DisplayTarget {
+                    id: fields[0].to_string(),
+                    name: fields[1].to_string(),
+                    x: fields[2].parse().ok()?,
+                    y: fields[3].parse().ok()?,
+                    width: fields[4].parse().ok()?,
+                    height: fields[5].parse().ok()?,
+                    primary: fields[6] == "1",
+                    available: true,
+                })
+            })
+            .collect()
+    }
+
     pub fn audio_devices(&self) -> Vec<AudioDeviceInfo> {
         [
             ("wasapi_output_capture", "output"),
@@ -261,8 +327,12 @@ impl ObsRecorder {
         let c_path = path_to_cstring(&path)?;
         let c_encoder = CString::new(encoder).map_err(|_| "invalid encoder id".to_string())?;
         let c_mode = CString::new(capture.mode).map_err(|_| "invalid capture mode".to_string())?;
-        let c_target = CString::new(capture.window_id.unwrap_or_default())
-            .map_err(|_| "invalid window id".to_string())?;
+        let target = if capture.mode == "window" {
+            capture.window_id.unwrap_or_default()
+        } else {
+            capture.display.map_or("", |display| display.id.as_str())
+        };
+        let c_target = CString::new(target).map_err(|_| "invalid window id".to_string())?;
         let c_mic_device = CString::new(capture.mic_device_id.unwrap_or("default"))
             .map_err(|_| "invalid microphone device id".to_string())?;
         let mut active = error_buffer();
@@ -275,6 +345,12 @@ impl ObsRecorder {
                 c_encoder.as_ptr(),
                 c_mode.as_ptr(),
                 c_target.as_ptr(),
+                capture.display.map_or(0, |display| display.width),
+                capture.display.map_or(0, |display| display.height),
+                capture.region.map_or(0, |region| region.x),
+                capture.region.map_or(0, |region| region.y),
+                capture.region.map_or(0, |region| region.width),
+                capture.region.map_or(0, |region| region.height),
                 capture.system_audio,
                 capture.microphone,
                 c_mic_device.as_ptr(),
@@ -296,6 +372,25 @@ impl ObsRecorder {
             active_encoder: read_error(&active),
             fallback_reason: (!fallback_reason.is_empty()).then_some(fallback_reason),
         })
+    }
+
+    pub fn pause(&mut self, pause: bool) -> Result<(), String> {
+        if self.active.is_none() {
+            return Err("no recording is active".into());
+        }
+        let mut error = error_buffer();
+        if unsafe {
+            luma_obs_pause(
+                self.context.as_ptr(),
+                pause,
+                error.as_mut_ptr(),
+                error.len(),
+            )
+        } {
+            Ok(())
+        } else {
+            Err(read_error(&error))
+        }
     }
 
     pub fn stop(&mut self) -> Result<(PathBuf, RecordingValidation), String> {

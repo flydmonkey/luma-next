@@ -185,7 +185,7 @@ async fn unsupported_start_mode_is_rejected_before_backend_access() {
                 .method("POST")
                 .uri("/api/v1/session/start")
                 .header("content-type", "application/json")
-                .body(Body::from(r#"{"mode":"region"}"#))
+                .body(Body::from(r#"{"mode":"game"}"#))
                 .expect("request"),
         )
         .await
