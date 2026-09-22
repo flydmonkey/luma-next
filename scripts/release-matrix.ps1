@@ -41,11 +41,13 @@ try {
         finally { if(-not $first.HasExited){Stop-Process -Id $first.Id} }
     }
 } finally { Pop-Location }
-$manual=Get-Content -LiteralPath $ManualChecklist -Raw
-$manualPendingMatches=[regex]::Matches($manual,'(?m)^- \[ \]')
-$manualPassedMatches=[regex]::Matches($manual,'(?mi)^- \[x\]')
-$manualPending=$manualPendingMatches.Count
-$manualPassed=$manualPassedMatches.Count
+$manualLines=@([IO.File]::ReadAllLines([IO.Path]::GetFullPath($ManualChecklist),[Text.Encoding]::UTF8))
+[int]$manualPending=0
+[int]$manualPassed=0
+foreach($line in $manualLines){
+    if($line -match '^- \[ \]'){$manualPending++}
+    elseif($line -match '(?i)^- \[x\]'){$manualPassed++}
+}
 $autoFail=@($results|Where-Object Status -eq 'FAIL').Count;$autoPass=@($results|Where-Object Status -eq 'PASS').Count
 $rows=($results|ForEach-Object{"| $($_.Name) | $($_.Status) | ``$($_.Log)`` |"}) -join "`n"
 $content=@"
