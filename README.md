@@ -95,11 +95,18 @@ cargo run -p luma-engine -- --open-ui
 
 # CI / 回归 / 无交互桌面会话
 cargo run -p luma-engine -- --no-tray
+
+# 为当前用户安装/卸载登录自启（推荐先 cargo build --release）
+.\target\release\luma-engine.exe --install-autostart
+.\target\release\luma-engine.exe --uninstall-autostart
 ```
 
 菜单提供打开控制页、开始/停止录制、状态和退出；录制动作与 HTTP 共用同一份 session
 状态及 stop 校验。项目不再包含 WebView2 桌面壳，也不依赖 WebView2 Runtime。详见
 [托盘说明](docs/TRAY.md)。
+
+引擎默认采用当前 Windows 会话内的产品级单例；第二次启动会在初始化录制资源前以
+退出码 2 结束。仅隔离开发场景可用 `--allow-second-instance --port <独立端口>` 绕过。
 
 ## API
 

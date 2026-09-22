@@ -41,6 +41,8 @@
 - 控制页由系统默认浏览器打开固定 localhost 地址，不嵌 WebView，不依赖 WebView2。
 - `--no-tray` 是 CI、回归和无交互会话的纯服务路径。
 - 默认仍只绑定 `127.0.0.1`，托盘不扩大网络边界。
+- 默认以 Windows 当前会话命名 mutex 保持产品单例；仅显式开发参数允许独立端口多开。
+- 登录自启只写当前用户 HKCU Run，不使用 HKLM 或 Session 0 Windows Service。
 
 ## M1 实现说明（2026-09-22）
 
