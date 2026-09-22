@@ -68,7 +68,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\uninstall.ps1
 - **打开控制页**：调用 Windows 默认浏览器打开 localhost WebUI。
 - **开始录制 / 停止录制**：同一个菜单项随共享 session 立即切换；开始使用当前
   settings，停止执行完整 ffprobe 诚实校验。
-- **状态**：只读显示空闲、录制 elapsed/实际编码器、最近错误或最近输出路径。
+- **状态**：只读显示空闲、录制 elapsed/目标摘要/实际编码器、最近错误或最近输出路径。
 - **退出**：若正在录制，先同步 stop 并验证；失败会写明日志并保留 session error，
   随后退出，不会假报保存成功。
 

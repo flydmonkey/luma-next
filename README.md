@@ -1,6 +1,6 @@
 # Luma Next
 
-本地屏幕录制：**嵌入 libobs 的 Rust 引擎** + **HTTP API** + **WebUI**。
+本地屏幕与窗口录制：**嵌入 libobs 的 Rust 引擎** + **HTTP API** + **WebUI**。
 
 旧版 Luma（../record，WinUI + 自研 Media Foundation）已归档，不再作为主开发线。原因见 [docs/BOUNDARY.md](docs/BOUNDARY.md)：多厂商硬编与 MF 异步样本生命周期成本过高，改由 OBS 管线承担。
 
@@ -55,6 +55,8 @@ cargo run -p luma-engine
 start http://127.0.0.1:18765/
 curl.exe http://127.0.0.1:18765/api/v1
 curl.exe http://127.0.0.1:18765/api/v1/session
+curl.exe http://127.0.0.1:18765/api/v1/targets
+curl.exe http://127.0.0.1:18765/api/v1/devices/audio
 ```
 
 默认监听 `127.0.0.1:18765`；可用 `--bind` 和 `--port` 覆盖。编译时可用
@@ -86,6 +88,10 @@ curl.exe -X POST http://127.0.0.1:18765/api/v1/session/stop
 输出写入 `%USERPROFILE%\Videos\Luma\luma-<timestamp>.mkv`。stop 只有在 OBS 已停止、
 文件非空、存在实际编码帧，并且 ffprobe 确认 H.264 视频、AAC 音频及可信时长后才
 返回 `ok:true`。
+
+录制中计时采用 OBS 已输出视频帧换算的媒体时间；`elapsed_seconds` 与
+`media_elapsed_seconds` 是 UI 主口径，`wall_elapsed_seconds` 只用于诊断。stop 后主计时
+切换为 ffprobe 容器时长。详见 [录制计时口径](docs/TIMING.md)。
 
 完整回归（默认依次录制 20 秒 x264，以及本机存在时的首选硬编）运行：
 
@@ -149,6 +155,7 @@ curl.exe -X DELETE http://127.0.0.1:18765/api/v1/library/luma-123.mkv
 | M2 | 正式 WebUI 对接 start/stop/状态（完成） |
 | M3 | library / settings 持久化与回归脚本（完成） |
 | M4 | 硬编探测/选择 + 诚实 x264 降级/遥测（完成） |
+| M5 | 麦克风混音 + OBS WGC 窗口捕获（完成） |
 
 ## 相关文档
 
@@ -160,6 +167,8 @@ curl.exe -X DELETE http://127.0.0.1:18765/api/v1/library/luma-123.mkv
 - [M3 API 与持久化](docs/M3.md)
 - [WebUI 迁移说明](docs/WEBUI.md)
 - [M4 硬件编码](docs/M4.md)
+- [M5 麦克风与窗口捕获](docs/M5.md)
+- [录制计时口径](docs/TIMING.md)
 - [Windows 托盘](docs/TRAY.md)
 - [安装与发布](docs/INSTALL.md)
 - [设计规格 2026-09-22](docs/superpowers/specs/2026-09-22-luma-next-design.md)
