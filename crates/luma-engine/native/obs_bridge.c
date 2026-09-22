@@ -10,10 +10,14 @@
 struct luma_obs {
     obs_scene_t *scene;
     obs_source_t *monitor;
+    obs_source_t *window;
     obs_source_t *desktop_audio;
+    obs_source_t *microphone;
+    obs_sceneitem_t *visual_item;
     obs_output_t *output;
     obs_encoder_t *video_encoder;
     obs_encoder_t *audio_encoder;
+    ULONGLONG recording_started_ms;
 };
 
 struct primary_display {
@@ -88,6 +92,25 @@ static void release_recording(struct luma_obs *ctx)
     if (ctx->audio_encoder) {
         obs_encoder_release(ctx->audio_encoder);
         ctx->audio_encoder = NULL;
+    }
+}
+
+static void release_dynamic_sources(struct luma_obs *ctx)
+{
+    obs_set_output_source(1, NULL);
+    obs_set_output_source(2, NULL);
+    if (ctx->microphone) {
+        obs_source_release(ctx->microphone);
+        ctx->microphone = NULL;
+    }
+    if (ctx->window) {
+        if (ctx->visual_item) {
+            obs_sceneitem_remove(ctx->visual_item);
+            ctx->visual_item = NULL;
+        }
+        obs_source_release(ctx->window);
+        ctx->window = NULL;
+        ctx->visual_item = obs_scene_add(ctx->scene, ctx->monitor);
     }
 }
 
@@ -193,12 +216,12 @@ struct luma_obs *luma_obs_initialize(const char *root, const char *config_path, 
     }
 
     ctx->scene = obs_scene_create("Luma fullscreen");
-    if (!ctx->scene || !obs_scene_add(ctx->scene, ctx->monitor)) {
+    ctx->visual_item = ctx->scene ? obs_scene_add(ctx->scene, ctx->monitor) : NULL;
+    if (!ctx->scene || !ctx->visual_item) {
         set_error(error, error_size, "failed to create the fullscreen scene");
         goto fail;
     }
     obs_set_output_source(0, obs_scene_get_source(ctx->scene));
-    obs_set_output_source(1, ctx->desktop_audio);
     return ctx;
 
 fail:
@@ -208,6 +231,73 @@ fail:
     obs_shutdown();
     free(ctx);
     return NULL;
+}
+
+size_t luma_obs_list_property(struct luma_obs *ctx, const char *source_id, const char *property_name,
+                              char *buffer, size_t buffer_size)
+{
+    (void)ctx;
+    if (!buffer || !buffer_size) return 0;
+    buffer[0] = 0;
+    obs_properties_t *properties = obs_get_source_properties(source_id);
+    if (!properties) return 0;
+    obs_property_t *property = obs_properties_get(properties, property_name);
+    size_t written = 0;
+    if (property) {
+        size_t count = obs_property_list_item_count(property);
+        for (size_t i = 0; i < count; ++i) {
+            const char *value = obs_property_list_item_string(property, i);
+            const char *name = obs_property_list_item_name(property, i);
+            if (!value || !*value || !name) continue;
+            int result = snprintf(buffer + written, buffer_size - written, "%s\t%s\n", value, name);
+            if (result < 0 || (size_t)result >= buffer_size - written) break;
+            written += (size_t)result;
+        }
+    }
+    obs_properties_destroy(properties);
+    return written;
+}
+
+static bool configure_sources(struct luma_obs *ctx, const char *mode, const char *target,
+                              bool system_audio, bool microphone, const char *mic_device,
+                              char *error, size_t error_size)
+{
+    release_dynamic_sources(ctx);
+    if (strcmp(mode, "window") == 0) {
+        obs_data_t *settings = obs_data_create();
+        obs_data_set_string(settings, "window", target);
+        obs_data_set_int(settings, "method", 2);
+        obs_data_set_int(settings, "priority", 0);
+        obs_data_set_bool(settings, "cursor", true);
+        obs_data_set_bool(settings, "client_area", true);
+        ctx->window = obs_source_create("window_capture", "Luma window", settings, NULL);
+        obs_data_release(settings);
+        if (!ctx->window) {
+            set_error(error, error_size, "failed to create window_capture source");
+            return false;
+        }
+        if (ctx->visual_item) obs_sceneitem_remove(ctx->visual_item);
+        ctx->visual_item = obs_scene_add(ctx->scene, ctx->window);
+        if (!ctx->visual_item) {
+            set_error(error, error_size, "failed to add window capture to scene");
+            release_dynamic_sources(ctx);
+            return false;
+        }
+    }
+    if (system_audio) obs_set_output_source(1, ctx->desktop_audio);
+    if (microphone) {
+        obs_data_t *settings = obs_data_create();
+        obs_data_set_string(settings, "device_id", mic_device && *mic_device ? mic_device : "default");
+        ctx->microphone = obs_source_create("wasapi_input_capture", "Luma microphone", settings, NULL);
+        obs_data_release(settings);
+        if (!ctx->microphone) {
+            set_error(error, error_size, "failed to create wasapi_input_capture source; check microphone privacy permission and device availability");
+            release_dynamic_sources(ctx);
+            return false;
+        }
+        obs_set_output_source(2, ctx->microphone);
+    }
+    return true;
 }
 
 bool luma_obs_encoder_available(struct luma_obs *ctx, const char *wanted)
@@ -262,6 +352,7 @@ static bool start_with_encoder(struct luma_obs *ctx, const char *path, const cha
         release_recording(ctx);
         return false;
     }
+    ctx->recording_started_ms = GetTickCount64();
     Sleep(750);
     if (!obs_output_active(ctx->output)) {
         const char *last_error = obs_output_get_last_error(ctx->output);
@@ -273,6 +364,8 @@ static bool start_with_encoder(struct luma_obs *ctx, const char *path, const cha
 }
 
 bool luma_obs_start(struct luma_obs *ctx, const char *path, const char *requested,
+                    const char *mode, const char *target, bool system_audio, bool microphone,
+                    const char *mic_device,
                     char *active, size_t active_size, char *fallback, size_t fallback_size,
                     char *error, size_t error_size)
 {
@@ -280,6 +373,8 @@ bool luma_obs_start(struct luma_obs *ctx, const char *path, const char *requeste
         set_error(error, error_size, "recording is already active");
         return false;
     }
+    if (!configure_sources(ctx, mode, target, system_audio, microphone, mic_device, error, error_size))
+        return false;
     char first_error[2048] = {0};
     const char *forced_failure = getenv("LUMA_FORCE_ENCODER_FAILURE");
     bool force_this_encoder = forced_failure && strcmp(forced_failure, requested) == 0;
@@ -292,23 +387,40 @@ bool luma_obs_start(struct luma_obs *ctx, const char *path, const char *requeste
     }
     if (strcmp(requested, "obs_x264") == 0) {
         set_error(error, error_size, first_error);
+        release_dynamic_sources(ctx);
         return false;
     }
     blog(LOG_WARNING, "Luma encoder %s failed, falling back to obs_x264: %s", requested, first_error);
-    if (!start_with_encoder(ctx, path, "obs_x264", error, error_size))
+    if (!start_with_encoder(ctx, path, "obs_x264", error, error_size)) {
+        release_dynamic_sources(ctx);
         return false;
+    }
     set_error(active, active_size, "obs_x264");
     set_error(fallback, fallback_size, first_error);
     return true;
 }
 
+double luma_obs_media_seconds(struct luma_obs *ctx)
+{
+    if (!ctx || !ctx->output) return 0.0;
+    return (double)obs_output_get_total_frames(ctx->output) / 30.0;
+}
+
+double luma_obs_wall_seconds(struct luma_obs *ctx)
+{
+    if (!ctx || !ctx->recording_started_ms) return 0.0;
+    return (double)(GetTickCount64() - ctx->recording_started_ms) / 1000.0;
+}
+
 bool luma_obs_stop(struct luma_obs *ctx, uint32_t *encoded_frames, uint64_t *total_bytes,
+                   double *media_seconds, double *wall_seconds,
                    char *error, size_t error_size)
 {
     if (!ctx || !ctx->output) {
         set_error(error, error_size, "no recording is active");
         return false;
     }
+    double stopped_wall_seconds = luma_obs_wall_seconds(ctx);
     obs_output_stop(ctx->output);
     for (int i = 0; i < 150 && obs_output_active(ctx->output); ++i) {
         Sleep(100);
@@ -316,18 +428,25 @@ bool luma_obs_stop(struct luma_obs *ctx, uint32_t *encoded_frames, uint64_t *tot
     if (obs_output_active(ctx->output)) {
         obs_output_force_stop(ctx->output);
         set_error(error, error_size, "OBS output did not stop within 15 seconds");
+        release_recording(ctx);
+        release_dynamic_sources(ctx);
         return false;
     }
     Sleep(500);
     if (encoded_frames) *encoded_frames = obs_encoder_get_encoded_frames(ctx->video_encoder);
     if (total_bytes) *total_bytes = obs_output_get_total_bytes(ctx->output);
+    if (media_seconds) *media_seconds = (double)obs_output_get_total_frames(ctx->output) / 30.0;
+    if (wall_seconds) *wall_seconds = stopped_wall_seconds;
     const char *last_error = obs_output_get_last_error(ctx->output);
     if (last_error && *last_error) {
         set_error(error, error_size, last_error);
         release_recording(ctx);
+        release_dynamic_sources(ctx);
         return false;
     }
     release_recording(ctx);
+    release_dynamic_sources(ctx);
+    ctx->recording_started_ms = 0;
     return true;
 }
 
@@ -338,6 +457,7 @@ void luma_obs_shutdown(struct luma_obs *ctx)
         obs_output_force_stop(ctx->output);
         release_recording(ctx);
     }
+    release_dynamic_sources(ctx);
     obs_set_output_source(0, NULL);
     obs_set_output_source(1, NULL);
     if (ctx->scene) obs_scene_release(ctx->scene);

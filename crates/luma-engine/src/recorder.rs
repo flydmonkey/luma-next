@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     ptr::NonNull,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde::Serialize;
@@ -24,6 +24,11 @@ unsafe extern "C" {
         context: *mut c_void,
         path: *const c_char,
         requested: *const c_char,
+        mode: *const c_char,
+        target: *const c_char,
+        system_audio: bool,
+        microphone: bool,
+        mic_device: *const c_char,
         active: *mut c_char,
         active_size: usize,
         fallback: *mut c_char,
@@ -32,14 +37,25 @@ unsafe extern "C" {
         error_size: usize,
     ) -> bool;
     fn luma_obs_encoder_available(context: *mut c_void, id: *const c_char) -> bool;
+    fn luma_obs_list_property(
+        context: *mut c_void,
+        source_id: *const c_char,
+        property_name: *const c_char,
+        buffer: *mut c_char,
+        buffer_size: usize,
+    ) -> usize;
     fn luma_obs_stop(
         context: *mut c_void,
         encoded_frames: *mut u32,
         total_bytes: *mut u64,
+        media_seconds: *mut f64,
+        wall_seconds: *mut f64,
         error: *mut c_char,
         error_size: usize,
     ) -> bool;
     fn luma_obs_shutdown(context: *mut c_void);
+    fn luma_obs_media_seconds(context: *mut c_void) -> f64;
+    fn luma_obs_wall_seconds(context: *mut c_void) -> f64;
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -48,6 +64,9 @@ pub struct RecordingValidation {
     pub audio_stream: bool,
     pub duration_seconds: f64,
     pub wall_seconds: f64,
+    pub media_seconds: f64,
+    pub media_ffprobe_delta_seconds: f64,
+    pub wall_media_delta_seconds: f64,
     pub encoded_frames: u32,
     pub bytes: u64,
 }
@@ -59,6 +78,32 @@ pub struct EncoderInfo {
     pub available: bool,
     pub hardware: bool,
     pub vendor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CaptureTarget {
+    pub id: String,
+    pub title: String,
+    pub executable: String,
+    pub minimized: bool,
+    pub available: bool,
+    pub unavailable_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AudioDeviceInfo {
+    pub id: String,
+    pub name: String,
+    pub kind: &'static str,
+    pub is_default: bool,
+}
+
+pub struct CaptureOptions<'a> {
+    pub mode: &'a str,
+    pub window_id: Option<&'a str>,
+    pub system_audio: bool,
+    pub microphone: bool,
+    pub mic_device_id: Option<&'a str>,
 }
 
 #[derive(Debug)]
@@ -75,7 +120,6 @@ pub struct ObsRecorder {
 
 struct ActiveRecording {
     path: PathBuf,
-    started: Instant,
 }
 
 // libobs owns its worker threads; access to this handle is serialized by the engine mutex.
@@ -134,7 +178,72 @@ impl ObsRecorder {
             .collect()
     }
 
-    pub fn start(&mut self, directory: &Path, encoder: &str) -> Result<RecordingStart, String> {
+    pub fn windows(&self) -> Vec<CaptureTarget> {
+        self.property_items("window_capture", "window")
+            .into_iter()
+            .map(|(id, label)| {
+                let (executable, title) = label
+                    .strip_prefix('[')
+                    .and_then(|value| value.split_once("]: "))
+                    .unwrap_or(("unknown", label.as_str()));
+                CaptureTarget {
+                    id,
+                    title: title.to_string(),
+                    executable: executable.to_string(),
+                    minimized: false,
+                    available: true,
+                    unavailable_reason: None,
+                }
+            })
+            .collect()
+    }
+
+    pub fn audio_devices(&self) -> Vec<AudioDeviceInfo> {
+        [
+            ("wasapi_output_capture", "output"),
+            ("wasapi_input_capture", "input"),
+        ]
+        .into_iter()
+        .flat_map(|(source, kind)| {
+            self.property_items(source, "device_id")
+                .into_iter()
+                .map(move |(id, name)| AudioDeviceInfo {
+                    is_default: id == "default",
+                    id,
+                    name,
+                    kind,
+                })
+        })
+        .collect()
+    }
+
+    fn property_items(&self, source: &str, property: &str) -> Vec<(String, String)> {
+        let source = CString::new(source).expect("static source id");
+        let property = CString::new(property).expect("static property id");
+        let mut buffer = vec![0_i8; 128 * 1024];
+        let written = unsafe {
+            luma_obs_list_property(
+                self.context.as_ptr(),
+                source.as_ptr(),
+                property.as_ptr(),
+                buffer.as_mut_ptr(),
+                buffer.len(),
+            )
+        };
+        let bytes = unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), written) };
+        String::from_utf8_lossy(bytes)
+            .lines()
+            .filter_map(|line| line.split_once('\t'))
+            .map(|(id, name)| (id.to_string(), name.to_string()))
+            .collect()
+    }
+
+    pub fn start(
+        &mut self,
+        directory: &Path,
+        encoder: &str,
+        capture: CaptureOptions<'_>,
+    ) -> Result<RecordingStart, String> {
         if self.active.is_some() {
             return Err("recording is already active".into());
         }
@@ -151,6 +260,11 @@ impl ObsRecorder {
         let path = directory.join(format!("luma-{timestamp}.mkv"));
         let c_path = path_to_cstring(&path)?;
         let c_encoder = CString::new(encoder).map_err(|_| "invalid encoder id".to_string())?;
+        let c_mode = CString::new(capture.mode).map_err(|_| "invalid capture mode".to_string())?;
+        let c_target = CString::new(capture.window_id.unwrap_or_default())
+            .map_err(|_| "invalid window id".to_string())?;
+        let c_mic_device = CString::new(capture.mic_device_id.unwrap_or("default"))
+            .map_err(|_| "invalid microphone device id".to_string())?;
         let mut active = error_buffer();
         let mut fallback = error_buffer();
         let mut error = error_buffer();
@@ -159,6 +273,11 @@ impl ObsRecorder {
                 self.context.as_ptr(),
                 c_path.as_ptr(),
                 c_encoder.as_ptr(),
+                c_mode.as_ptr(),
+                c_target.as_ptr(),
+                capture.system_audio,
+                capture.microphone,
+                c_mic_device.as_ptr(),
                 active.as_mut_ptr(),
                 active.len(),
                 fallback.as_mut_ptr(),
@@ -170,10 +289,7 @@ impl ObsRecorder {
         if !started {
             return Err(read_error(&error));
         }
-        self.active = Some(ActiveRecording {
-            path: path.clone(),
-            started: Instant::now(),
-        });
+        self.active = Some(ActiveRecording { path: path.clone() });
         let fallback_reason = read_error(&fallback);
         Ok(RecordingStart {
             path,
@@ -189,12 +305,16 @@ impl ObsRecorder {
             .ok_or_else(|| "no recording is active".to_string())?;
         let mut encoded_frames = 0;
         let mut reported_bytes = 0;
+        let mut media_seconds = 0.0;
+        let mut wall_seconds = 0.0;
         let mut error = error_buffer();
         let stopped = unsafe {
             luma_obs_stop(
                 self.context.as_ptr(),
                 &mut encoded_frames,
                 &mut reported_bytes,
+                &mut media_seconds,
+                &mut wall_seconds,
                 error.as_mut_ptr(),
                 error.len(),
             )
@@ -202,9 +322,26 @@ impl ObsRecorder {
         if !stopped {
             return Err(read_error(&error));
         }
-        let wall = active.started.elapsed();
-        let validation = validate_recording(&active.path, wall, encoded_frames, reported_bytes)?;
+        let validation = validate_recording(
+            &active.path,
+            media_seconds,
+            wall_seconds,
+            encoded_frames,
+            reported_bytes,
+        )?;
         Ok((active.path, validation))
+    }
+
+    pub fn elapsed(&self) -> (f64, f64) {
+        if self.active.is_none() {
+            return (0.0, 0.0);
+        }
+        unsafe {
+            (
+                luma_obs_media_seconds(self.context.as_ptr()),
+                luma_obs_wall_seconds(self.context.as_ptr()),
+            )
+        }
     }
 }
 
@@ -259,7 +396,8 @@ impl Drop for ObsRecorder {
 
 fn validate_recording(
     path: &Path,
-    wall: Duration,
+    media_seconds: f64,
+    wall_seconds: f64,
     encoded_frames: u32,
     reported_bytes: u64,
 ) -> Result<RecordingValidation, String> {
@@ -313,16 +451,23 @@ fn validate_recording(
         .as_str()
         .and_then(|value| value.parse::<f64>().ok())
         .ok_or_else(|| "ffprobe returned no valid container duration".to_string())?;
-    let wall_seconds = wall.as_secs_f64();
-    let tolerance = (wall_seconds * 0.35).max(3.0);
+    let ffprobe_tolerance = 1.5;
+    let clock_tolerance = (wall_seconds * 0.005).max(1.5);
     if !video_stream || !audio_stream {
         return Err(format!(
             "recording is missing required streams (video={video_stream}, audio={audio_stream})"
         ));
     }
-    if duration_seconds < 1.0 || (duration_seconds - wall_seconds).abs() > tolerance {
+    let media_ffprobe_delta_seconds = (duration_seconds - media_seconds).abs();
+    let wall_media_delta_seconds = (media_seconds - wall_seconds).abs();
+    if duration_seconds < 1.0 || media_ffprobe_delta_seconds > ffprobe_tolerance {
         return Err(format!(
-            "recording duration is not credible (media={duration_seconds:.3}s, wall={wall_seconds:.3}s, tolerance={tolerance:.3}s)"
+            "recording duration disagrees with OBS output frames (ffprobe={duration_seconds:.3}s, OBS media={media_seconds:.3}s, tolerance={ffprobe_tolerance:.3}s)"
+        ));
+    }
+    if wall_media_delta_seconds > clock_tolerance {
+        return Err(format!(
+            "OBS media time diverged from output wall clock (media={media_seconds:.3}s, wall={wall_seconds:.3}s, tolerance={clock_tolerance:.3}s)"
         ));
     }
     Ok(RecordingValidation {
@@ -330,6 +475,9 @@ fn validate_recording(
         audio_stream,
         duration_seconds,
         wall_seconds,
+        media_seconds,
+        media_ffprobe_delta_seconds,
+        wall_media_delta_seconds,
         encoded_frames,
         bytes,
     })

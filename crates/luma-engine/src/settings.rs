@@ -7,6 +7,14 @@ pub struct Settings {
     pub output_directory: String,
     pub record_system_audio: bool,
     pub record_microphone: bool,
+    #[serde(default = "default_capture_mode")]
+    pub capture_mode: String,
+    #[serde(default = "default_display_id")]
+    pub display_id: String,
+    #[serde(default)]
+    pub window_id: Option<String>,
+    #[serde(default = "default_mic_device")]
+    pub mic_device_id: String,
     pub quality: String,
     #[serde(default = "default_encoder")]
     pub encoder: String,
@@ -18,6 +26,10 @@ impl Settings {
             output_directory: output_directory.to_string_lossy().into_owned(),
             record_system_audio: true,
             record_microphone: false,
+            capture_mode: default_capture_mode(),
+            display_id: default_display_id(),
+            window_id: None,
+            mic_device_id: default_mic_device(),
             quality: "1080p30".into(),
             encoder: default_encoder(),
         }
@@ -28,11 +40,15 @@ impl Settings {
         if !output.is_absolute() {
             return Err("output_directory must be an absolute path".into());
         }
-        if !self.record_system_audio {
-            return Err("system audio cannot be disabled by the M3 recorder".into());
+        if !self.record_system_audio && !self.record_microphone {
+            return Err("at least one of system audio or microphone must be enabled".into());
         }
-        if self.record_microphone {
-            return Err("microphone capture is not implemented yet".into());
+        if !matches!(self.capture_mode.as_str(), "display" | "window") {
+            return Err("capture_mode must be display or window".into());
+        }
+        if self.capture_mode == "window" && self.window_id.as_deref().unwrap_or_default().is_empty()
+        {
+            return Err("window_id is required for window capture".into());
         }
         if self.quality != "1080p30" {
             return Err("only quality 1080p30 is currently supported".into());
@@ -46,6 +62,18 @@ impl Settings {
 
 fn default_encoder() -> String {
     "obs_x264".into()
+}
+
+fn default_capture_mode() -> String {
+    "display".into()
+}
+
+fn default_display_id() -> String {
+    "primary".into()
+}
+
+fn default_mic_device() -> String {
+    "default".into()
 }
 
 pub struct SettingsStore {

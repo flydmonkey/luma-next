@@ -15,10 +15,12 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::{Arc, Mutex},
-    time::{Instant, UNIX_EPOCH},
+    time::UNIX_EPOCH,
 };
 
-pub use recorder::{EncoderInfo, ObsRecorder, RecordingValidation};
+pub use recorder::{
+    AudioDeviceInfo, CaptureOptions, CaptureTarget, EncoderInfo, ObsRecorder, RecordingValidation,
+};
 use settings::{Settings, SettingsStore, default_output_directory, default_settings_path};
 
 #[derive(Serialize)]
@@ -37,6 +39,8 @@ struct Probe {
 struct Session {
     state: &'static str,
     elapsed_seconds: f64,
+    media_elapsed_seconds: f64,
+    wall_elapsed_seconds: f64,
     output_path: Option<String>,
     error: Option<String>,
     validation: Option<RecordingValidation>,
@@ -44,14 +48,20 @@ struct Session {
     encoder_active: Option<String>,
     encoder_fallback: bool,
     fallback_reason: Option<String>,
-    #[serde(skip)]
-    started: Option<Instant>,
+    capture_mode: String,
+    target_summary: String,
+    system_audio: bool,
+    microphone: bool,
+    audio_sources_active: Vec<String>,
+    warning: Option<String>,
 }
 impl Default for Session {
     fn default() -> Self {
         Self {
             state: "idle",
             elapsed_seconds: 0.0,
+            media_elapsed_seconds: 0.0,
+            wall_elapsed_seconds: 0.0,
             output_path: None,
             error: None,
             validation: None,
@@ -59,18 +69,36 @@ impl Default for Session {
             encoder_active: None,
             encoder_fallback: false,
             fallback_reason: None,
-            started: None,
+            capture_mode: "display".into(),
+            target_summary: "主显示器".into(),
+            system_audio: true,
+            microphone: false,
+            audio_sources_active: Vec::new(),
+            warning: None,
         }
     }
 }
 impl Session {
     fn snapshot(&self) -> Self {
-        let mut value = self.clone();
-        value.elapsed_seconds = self
-            .started
-            .map_or(self.elapsed_seconds, |start| start.elapsed().as_secs_f64());
-        value
+        self.clone()
     }
+}
+
+fn session_snapshot(controller: &Controller) -> Session {
+    let mut session = controller.session.snapshot();
+    if session.state == "recording" {
+        if let Some(recorder) = controller.recorder.as_ref() {
+            let (media, wall) = recorder.elapsed();
+            apply_elapsed(&mut session, media, wall);
+        }
+    }
+    session
+}
+
+fn apply_elapsed(session: &mut Session, media: f64, wall: f64) {
+    session.elapsed_seconds = media;
+    session.media_elapsed_seconds = media;
+    session.wall_elapsed_seconds = wall;
 }
 
 struct Controller {
@@ -92,6 +120,8 @@ pub struct TrayStatus {
     pub output_path: Option<String>,
     pub error: Option<String>,
     pub encoder_active: Option<String>,
+    pub capture_mode: String,
+    pub target_summary: String,
 }
 
 impl Engine {
@@ -110,18 +140,16 @@ impl Engine {
     }
 
     pub fn tray_status(&self) -> TrayStatus {
-        let session = self
-            .state
-            .lock()
-            .expect("controller mutex poisoned")
-            .session
-            .snapshot();
+        let controller = self.state.lock().expect("controller mutex poisoned");
+        let session = session_snapshot(&controller);
         TrayStatus {
             state: session.state.into(),
             elapsed_seconds: session.elapsed_seconds,
             output_path: session.output_path,
             error: session.error,
             encoder_active: session.encoder_active,
+            capture_mode: session.capture_mode,
+            target_summary: session.target_summary,
         }
     }
 
@@ -140,13 +168,15 @@ impl Engine {
     }
 
     fn tray_status_from_locked(&self, controller: &Controller) -> TrayStatus {
-        let session = controller.session.snapshot();
+        let session = session_snapshot(controller);
         TrayStatus {
             state: session.state.into(),
             elapsed_seconds: session.elapsed_seconds,
             output_path: session.output_path,
             error: session.error,
             encoder_active: session.encoder_active,
+            capture_mode: session.capture_mode,
+            target_summary: session.target_summary,
         }
     }
 }
@@ -192,6 +222,8 @@ fn router_with_state(state: AppState) -> Router {
         .route("/dev", get(dev_index))
         .route("/api/v1", get(probe))
         .route("/api/v1/encoders", get(encoders))
+        .route("/api/v1/targets", get(targets))
+        .route("/api/v1/devices/audio", get(audio_devices))
         .route("/api/v1/session", get(session))
         .route("/api/v1/session/start", post(start_recording))
         .route("/api/v1/session/stop", post(stop_recording))
@@ -246,12 +278,55 @@ async fn encoders(State(state): State<AppState>) -> Response {
         encoders: recorder.encoders(),
     })
 }
+#[derive(Serialize)]
+struct Targets {
+    displays: Vec<Value>,
+    windows: Vec<CaptureTarget>,
+}
+async fn targets(State(state): State<AppState>) -> Response {
+    let controller = state.lock().expect("controller mutex poisoned");
+    let Some(recorder) = controller.recorder.as_ref() else {
+        return error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "libobs recorder is not initialized",
+        );
+    };
+    success_response(Targets {
+        displays: vec![
+            serde_json::json!({"id":"primary","name":"主显示器","primary":true,"available":true}),
+        ],
+        windows: recorder.windows(),
+    })
+}
+#[derive(Serialize)]
+struct AudioDevices {
+    outputs: Vec<AudioDeviceInfo>,
+    inputs: Vec<AudioDeviceInfo>,
+}
+async fn audio_devices(State(state): State<AppState>) -> Response {
+    let controller = state.lock().expect("controller mutex poisoned");
+    let Some(recorder) = controller.recorder.as_ref() else {
+        return error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "libobs recorder is not initialized",
+        );
+    };
+    let devices = recorder.audio_devices();
+    success_response(AudioDevices {
+        outputs: devices
+            .iter()
+            .filter(|item| item.kind == "output")
+            .cloned()
+            .collect(),
+        inputs: devices
+            .into_iter()
+            .filter(|item| item.kind == "input")
+            .collect(),
+    })
+}
 async fn session(State(state): State<AppState>) -> Json<Envelope<Session>> {
-    let data = state
-        .lock()
-        .expect("controller mutex poisoned")
-        .session
-        .snapshot();
+    let controller = state.lock().expect("controller mutex poisoned");
+    let data = session_snapshot(&controller);
     Json(Envelope {
         ok: true,
         data,
@@ -266,6 +341,8 @@ struct StartRequest {
     microphone: Option<bool>,
     quality: Option<String>,
     encoder: Option<String>,
+    window_id: Option<String>,
+    mic_device_id: Option<String>,
 }
 
 async fn start_recording(State(state): State<AppState>, body: axum::body::Bytes) -> Response {
@@ -297,28 +374,22 @@ fn start_locked(
         return Err((StatusCode::CONFLICT, "recording is already active".into()));
     }
     let configured = controller.settings.current().clone();
-    let mode = request.mode.as_deref().unwrap_or("display");
+    let mode = request.mode.as_deref().unwrap_or(&configured.capture_mode);
     let system_audio = request
         .system_audio
         .unwrap_or(configured.record_system_audio);
     let microphone = request.microphone.unwrap_or(configured.record_microphone);
     let quality = request.quality.as_deref().unwrap_or(&configured.quality);
-    if mode != "display" {
+    if !matches!(mode, "display" | "window") {
         return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
-            "only display capture is implemented".into(),
+            "only display and window capture are implemented".into(),
         ));
     }
-    if !system_audio {
+    if !system_audio && !microphone {
         return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
-            "system audio is required by the M3 recorder".into(),
-        ));
-    }
-    if microphone {
-        return Err((
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "microphone capture is not implemented yet".into(),
+            "at least one of system audio or microphone must be enabled".into(),
         ));
     }
     if quality != "1080p30" {
@@ -334,6 +405,8 @@ fn start_locked(
         ));
     }
     let requested_encoder = request.encoder.unwrap_or(configured.encoder);
+    let window_id = request.window_id.or(configured.window_id);
+    let mic_device_id = request.mic_device_id.unwrap_or(configured.mic_device_id);
     let available = controller.recorder.as_ref().is_some_and(|recorder| {
         recorder
             .encoders()
@@ -346,6 +419,38 @@ fn start_locked(
             format!("encoder {requested_encoder} is not available"),
         ));
     }
+    if mode == "window" {
+        let Some(id) = window_id.as_deref() else {
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "window_id is required for window capture".into(),
+            ));
+        };
+        let listed = controller
+            .recorder
+            .as_ref()
+            .is_some_and(|recorder| recorder.windows().iter().any(|item| item.id == id));
+        if !listed {
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "window_id is no longer present in the current capture target list".into(),
+            ));
+        }
+    }
+    if microphone {
+        let listed = controller.recorder.as_ref().is_some_and(|recorder| {
+            recorder
+                .audio_devices()
+                .iter()
+                .any(|item| item.kind == "input" && item.id == mic_device_id)
+        });
+        if !listed {
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                format!("microphone device {mic_device_id} is unavailable"),
+            ));
+        }
+    }
     let output_directory = PathBuf::from(configured.output_directory);
     let Some(recorder) = controller.recorder.as_mut() else {
         return Err((
@@ -353,12 +458,33 @@ fn start_locked(
             "libobs recorder is not initialized".into(),
         ));
     };
-    match recorder.start(&output_directory, &requested_encoder) {
+    let target_summary = if mode == "window" {
+        recorder
+            .windows()
+            .into_iter()
+            .find(|item| Some(item.id.as_str()) == window_id.as_deref())
+            .map_or_else(|| "窗口".into(), |item| item.title)
+    } else {
+        "主显示器".into()
+    };
+    match recorder.start(
+        &output_directory,
+        &requested_encoder,
+        CaptureOptions {
+            mode,
+            window_id: window_id.as_deref(),
+            system_audio,
+            microphone,
+            mic_device_id: Some(&mic_device_id),
+        },
+    ) {
         Ok(start) => {
             let fallback_reason = start.fallback_reason.clone();
             controller.session = Session {
                 state: "recording",
                 elapsed_seconds: 0.0,
+                media_elapsed_seconds: 0.0,
+                wall_elapsed_seconds: 0.0,
                 output_path: Some(start.path.to_string_lossy().into_owned()),
                 error: None,
                 validation: None,
@@ -366,9 +492,22 @@ fn start_locked(
                 encoder_active: Some(start.active_encoder),
                 encoder_fallback: fallback_reason.is_some(),
                 fallback_reason,
-                started: Some(Instant::now()),
+                capture_mode: mode.to_string(),
+                target_summary,
+                system_audio,
+                microphone,
+                audio_sources_active: [
+                    system_audio.then_some("system".into()),
+                    microphone.then_some("microphone".into()),
+                ]
+                .into_iter()
+                .flatten()
+                .collect(),
+                warning: (mode == "window").then_some(
+                    "目标窗口最小化或关闭后画面可能变黑；请停止录制并重新选择窗口".into(),
+                ),
             };
-            Ok(controller.session.snapshot())
+            Ok(session_snapshot(controller))
         }
         Err(error) => {
             controller.session.state = "failed";
@@ -399,16 +538,16 @@ fn stop_locked(controller: &mut Controller) -> Result<Session, (StatusCode, Stri
     match recorder.stop() {
         Ok((path, validation)) => {
             controller.session.state = "idle";
-            controller.session.elapsed_seconds = validation.wall_seconds;
+            controller.session.elapsed_seconds = validation.duration_seconds;
+            controller.session.media_elapsed_seconds = validation.media_seconds;
+            controller.session.wall_elapsed_seconds = validation.wall_seconds;
             controller.session.output_path = Some(path.to_string_lossy().into_owned());
             controller.session.validation = Some(validation);
-            controller.session.started = None;
             controller.session.error = None;
-            Ok(controller.session.snapshot())
+            Ok(session_snapshot(controller))
         }
         Err(error) => {
             controller.session.state = "failed";
-            controller.session.started = None;
             controller.session.error = Some(error.clone());
             Err((StatusCode::INTERNAL_SERVER_ERROR, error))
         }
@@ -521,6 +660,34 @@ async fn put_settings(State(state): State<AppState>, Json(settings): Json<Settin
             StatusCode::UNPROCESSABLE_ENTITY,
             format!("encoder {} is not available", settings.encoder),
         );
+    }
+    if settings.capture_mode == "window" {
+        let valid = settings.window_id.as_deref().is_some_and(|id| {
+            controller
+                .recorder
+                .as_ref()
+                .is_some_and(|recorder| recorder.windows().iter().any(|item| item.id == id))
+        });
+        if !valid {
+            return error_response(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "window_id is not in the current target list",
+            );
+        }
+    }
+    if settings.record_microphone {
+        let valid = controller.recorder.as_ref().is_some_and(|recorder| {
+            recorder
+                .audio_devices()
+                .iter()
+                .any(|item| item.kind == "input" && item.id == settings.mic_device_id)
+        });
+        if !valid {
+            return error_response(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "selected microphone device is unavailable",
+            );
+        }
     }
     match controller.settings.save(settings.clone()) {
         Ok(()) => success_response(settings),
@@ -648,5 +815,17 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         assert!(safe_recording_path(directory.path(), "../outside.mkv").is_err());
         assert!(safe_recording_path(directory.path(), "notes.txt").is_err());
+    }
+
+    #[test]
+    fn recording_session_uses_media_time_as_primary_elapsed() {
+        let mut session = Session {
+            state: "recording",
+            ..Session::default()
+        };
+        apply_elapsed(&mut session, 1219.3, 1206.0);
+        assert_eq!(session.elapsed_seconds, 1219.3);
+        assert_eq!(session.media_elapsed_seconds, 1219.3);
+        assert_eq!(session.wall_elapsed_seconds, 1206.0);
     }
 }

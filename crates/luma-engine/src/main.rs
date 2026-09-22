@@ -244,10 +244,11 @@ fn run_tray(engine: Engine, control_url: String, exit_tx: watch::Sender<bool>) {
 fn status_summary(status: &luma_engine::TrayStatus) -> String {
     if status.state == "recording" {
         format!(
-            "录制中 {:02}:{:02}:{:02} · {}",
+            "录制中 {:02}:{:02}:{:02} · {} · {}",
             status.elapsed_seconds as u64 / 3600,
             status.elapsed_seconds as u64 % 3600 / 60,
             status.elapsed_seconds as u64 % 60,
+            status.target_summary,
             status.encoder_active.as_deref().unwrap_or("编码器未知")
         )
     } else if let Some(error) = &status.error {
