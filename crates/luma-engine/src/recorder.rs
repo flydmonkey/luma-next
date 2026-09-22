@@ -90,12 +90,11 @@ impl ObsRecorder {
             .ok_or_else(|| read_error(&error))
     }
 
-    pub fn start(&mut self) -> Result<PathBuf, String> {
+    pub fn start(&mut self, directory: &Path) -> Result<PathBuf, String> {
         if self.active.is_some() {
             return Err("recording is already active".into());
         }
-        let directory = recordings_directory();
-        std::fs::create_dir_all(&directory).map_err(|error| {
+        std::fs::create_dir_all(directory).map_err(|error| {
             format!(
                 "failed to create recording directory {}: {error}",
                 directory.display()
@@ -156,14 +155,6 @@ impl Drop for ObsRecorder {
     fn drop(&mut self) {
         unsafe { luma_obs_shutdown(self.context.as_ptr()) };
     }
-}
-
-fn recordings_directory() -> PathBuf {
-    std::env::var_os("USERPROFILE")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("Videos")
-        .join("Luma")
 }
 
 fn validate_recording(
@@ -252,14 +243,4 @@ fn read_error(buffer: &[c_char]) -> String {
         .to_string_lossy()
         .trim()
         .to_string()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn recording_directory_matches_the_shell_contract() {
-        assert!(recordings_directory().ends_with(Path::new("Videos").join("Luma")));
-    }
 }

@@ -18,4 +18,5 @@ tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal
 cc = "1"
 
 [dev-dependencies]
+tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
