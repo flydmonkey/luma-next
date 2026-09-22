@@ -1,5 +1,6 @@
 /target/
 /dist/
+/artifacts/
 /third_party/ffmpeg/cache/
 **/*.rs.bk
 .idea/
