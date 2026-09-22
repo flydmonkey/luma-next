@@ -79,6 +79,77 @@ struct Controller {
 }
 type AppState = Arc<Mutex<Controller>>;
 
+#[derive(Clone)]
+pub struct Engine {
+    state: AppState,
+}
+
+#[derive(Clone, Debug)]
+pub struct TrayStatus {
+    pub state: String,
+    pub elapsed_seconds: f64,
+    pub output_path: Option<String>,
+    pub error: Option<String>,
+    pub encoder_active: Option<String>,
+}
+
+impl Engine {
+    pub fn new(recorder: ObsRecorder) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(controller(
+                Some(recorder),
+                default_settings_path(),
+                default_output_directory(),
+            ))),
+        }
+    }
+
+    pub fn router(&self) -> Router {
+        router_with_state(self.state.clone())
+    }
+
+    pub fn tray_status(&self) -> TrayStatus {
+        let session = self
+            .state
+            .lock()
+            .expect("controller mutex poisoned")
+            .session
+            .snapshot();
+        TrayStatus {
+            state: session.state.into(),
+            elapsed_seconds: session.elapsed_seconds,
+            output_path: session.output_path,
+            error: session.error,
+            encoder_active: session.encoder_active,
+        }
+    }
+
+    pub fn start_default(&self) -> Result<TrayStatus, String> {
+        let mut controller = self.state.lock().expect("controller mutex poisoned");
+        start_locked(&mut controller, StartRequest::default())
+            .map(|_| self.tray_status_from_locked(&controller))
+            .map_err(|(_, error)| error)
+    }
+
+    pub fn stop(&self) -> Result<TrayStatus, String> {
+        let mut controller = self.state.lock().expect("controller mutex poisoned");
+        stop_locked(&mut controller)
+            .map(|_| self.tray_status_from_locked(&controller))
+            .map_err(|(_, error)| error)
+    }
+
+    fn tray_status_from_locked(&self, controller: &Controller) -> TrayStatus {
+        let session = controller.session.snapshot();
+        TrayStatus {
+            state: session.state.into(),
+            elapsed_seconds: session.elapsed_seconds,
+            output_path: session.output_path,
+            error: session.error,
+            encoder_active: session.encoder_active,
+        }
+    }
+}
+
 pub fn app() -> Router {
     router(controller(
         None,
@@ -87,11 +158,7 @@ pub fn app() -> Router {
     ))
 }
 pub fn app_with_recorder(recorder: ObsRecorder) -> Router {
-    router(controller(
-        Some(recorder),
-        default_settings_path(),
-        default_output_directory(),
-    ))
+    Engine::new(recorder).router()
 }
 #[doc(hidden)]
 pub fn app_with_paths(settings_path: PathBuf, output_directory: PathBuf) -> Router {
@@ -113,6 +180,10 @@ fn controller(
 }
 
 fn router(controller: Controller) -> Router {
+    router_with_state(Arc::new(Mutex::new(controller)))
+}
+
+fn router_with_state(state: AppState) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/app.css", get(styles))
@@ -127,7 +198,7 @@ fn router(controller: Controller) -> Router {
         .route("/api/v1/library/open", post(open_library))
         .route("/api/v1/library/{id}", delete(delete_library_item))
         .route("/api/v1/settings", get(get_settings).put(put_settings))
-        .with_state(Arc::new(Mutex::new(controller)))
+        .with_state(state)
 }
 
 async fn index() -> Html<&'static str> {
@@ -196,15 +267,34 @@ struct StartRequest {
     encoder: Option<String>,
 }
 
-async fn start_recording(
-    State(state): State<AppState>,
-    request: Option<Json<StartRequest>>,
-) -> Response {
+async fn start_recording(State(state): State<AppState>, body: axum::body::Bytes) -> Response {
     let mut controller = state.lock().expect("controller mutex poisoned");
-    if controller.session.state == "recording" {
-        return error_response(StatusCode::CONFLICT, "recording is already active");
+    let request = if body.is_empty() {
+        StartRequest::default()
+    } else {
+        match serde_json::from_slice(&body) {
+            Ok(request) => request,
+            Err(error) => {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    format!("invalid start request JSON: {error}"),
+                );
+            }
+        }
+    };
+    match start_locked(&mut controller, request) {
+        Ok(session) => success_response(session),
+        Err((status, error)) => error_response(status, error),
     }
-    let request = request.map_or_else(StartRequest::default, |Json(value)| value);
+}
+
+fn start_locked(
+    controller: &mut Controller,
+    request: StartRequest,
+) -> Result<Session, (StatusCode, String)> {
+    if controller.session.state == "recording" {
+        return Err((StatusCode::CONFLICT, "recording is already active".into()));
+    }
     let configured = controller.settings.current().clone();
     let mode = request.mode.as_deref().unwrap_or("display");
     let system_audio = request
@@ -213,34 +303,34 @@ async fn start_recording(
     let microphone = request.microphone.unwrap_or(configured.record_microphone);
     let quality = request.quality.as_deref().unwrap_or(&configured.quality);
     if mode != "display" {
-        return error_response(
+        return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
-            "only display capture is implemented",
-        );
+            "only display capture is implemented".into(),
+        ));
     }
     if !system_audio {
-        return error_response(
+        return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
-            "system audio is required by the M3 recorder",
-        );
+            "system audio is required by the M3 recorder".into(),
+        ));
     }
     if microphone {
-        return error_response(
+        return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
-            "microphone capture is not implemented yet",
-        );
+            "microphone capture is not implemented yet".into(),
+        ));
     }
     if quality != "1080p30" {
-        return error_response(
+        return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
-            "only quality 1080p30 is supported",
-        );
+            "only quality 1080p30 is supported".into(),
+        ));
     }
     if controller.recorder.is_none() {
-        return error_response(
+        return Err((
             StatusCode::SERVICE_UNAVAILABLE,
-            "libobs recorder is not initialized",
-        );
+            "libobs recorder is not initialized".into(),
+        ));
     }
     let requested_encoder = request.encoder.unwrap_or(configured.encoder);
     let available = controller.recorder.as_ref().is_some_and(|recorder| {
@@ -250,17 +340,17 @@ async fn start_recording(
             .any(|item| item.available && item.id == requested_encoder)
     });
     if !available {
-        return error_response(
+        return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
             format!("encoder {requested_encoder} is not available"),
-        );
+        ));
     }
     let output_directory = PathBuf::from(configured.output_directory);
     let Some(recorder) = controller.recorder.as_mut() else {
-        return error_response(
+        return Err((
             StatusCode::SERVICE_UNAVAILABLE,
-            "libobs recorder is not initialized",
-        );
+            "libobs recorder is not initialized".into(),
+        ));
     };
     match recorder.start(&output_directory, &requested_encoder) {
         Ok(start) => {
@@ -277,26 +367,33 @@ async fn start_recording(
                 fallback_reason,
                 started: Some(Instant::now()),
             };
-            success_response(controller.session.snapshot())
+            Ok(controller.session.snapshot())
         }
         Err(error) => {
             controller.session.state = "failed";
             controller.session.error = Some(error.clone());
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, error)
+            Err((StatusCode::INTERNAL_SERVER_ERROR, error))
         }
     }
 }
 
 async fn stop_recording(State(state): State<AppState>) -> Response {
     let mut controller = state.lock().expect("controller mutex poisoned");
+    match stop_locked(&mut controller) {
+        Ok(session) => success_response(session),
+        Err((status, error)) => error_response(status, error),
+    }
+}
+
+fn stop_locked(controller: &mut Controller) -> Result<Session, (StatusCode, String)> {
     if controller.session.state != "recording" {
-        return error_response(StatusCode::CONFLICT, "no recording is active");
+        return Err((StatusCode::CONFLICT, "no recording is active".into()));
     }
     let Some(recorder) = controller.recorder.as_mut() else {
-        return error_response(
+        return Err((
             StatusCode::SERVICE_UNAVAILABLE,
-            "libobs recorder is not initialized",
-        );
+            "libobs recorder is not initialized".into(),
+        ));
     };
     match recorder.stop() {
         Ok((path, validation)) => {
@@ -306,13 +403,13 @@ async fn stop_recording(State(state): State<AppState>) -> Response {
             controller.session.validation = Some(validation);
             controller.session.started = None;
             controller.session.error = None;
-            success_response(controller.session.snapshot())
+            Ok(controller.session.snapshot())
         }
         Err(error) => {
             controller.session.state = "failed";
             controller.session.started = None;
             controller.session.error = Some(error.clone());
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, error)
+            Err((StatusCode::INTERNAL_SERVER_ERROR, error))
         }
     }
 }

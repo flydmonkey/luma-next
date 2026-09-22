@@ -60,7 +60,7 @@ try {
         & cargo.exe build -p luma-engine
         if ($LASTEXITCODE -ne 0) { throw 'cargo build -p luma-engine failed.' }
         $enginePath=Join-Path $repository 'target\debug\luma-engine.exe'; $temp=[System.IO.Path]::GetTempPath()
-        $engineProcess=Start-Process $enginePath -WorkingDirectory $repository -WindowStyle Hidden -RedirectStandardOutput (Join-Path $temp 'luma-regression-engine.log') -RedirectStandardError (Join-Path $temp 'luma-regression-engine-error.log') -PassThru
+        $engineProcess=Start-Process $enginePath -ArgumentList '--no-tray' -WorkingDirectory $repository -WindowStyle Hidden -RedirectStandardOutput (Join-Path $temp 'luma-regression-engine.log') -RedirectStandardError (Join-Path $temp 'luma-regression-engine-error.log') -PassThru
         $ready=$false; foreach($attempt in 1..90){Start-Sleep -Milliseconds 500;try{$null=Invoke-LumaApi '/api/v1';$ready=$true;break}catch{};if($engineProcess.HasExited){throw "Engine exited during startup with code $($engineProcess.ExitCode)."}}
         if(-not $ready){throw 'Engine did not become ready within 45 seconds.'}
     }

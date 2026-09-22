@@ -50,7 +50,7 @@ async fn session_starts_idle() {
 }
 
 #[tokio::test]
-async fn root_serves_a_shell_safe_webui() {
+async fn root_serves_the_browser_webui() {
     let response = luma_engine::app()
         .oneshot(
             Request::builder()
