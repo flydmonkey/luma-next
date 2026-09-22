@@ -27,6 +27,7 @@ WebUI (browser / luma-shell)  --HTTP-->  luma-engine (Rust)
 ```
 luma-next/
   crates/          # Rust workspace
+    luma-engine/   # localhost HTTP 引擎
     luma-shell/    # Windows WebView2 薄壳
   web/             # WebUI 静态资源或子项目（后续接入）
   docs/
@@ -45,12 +46,16 @@ luma-next/
 
 ## 快速开始
 
-> M0 落地前引擎命令为预期形态。
-
-```bash
+```powershell
 cargo run -p luma-engine
-# 浏览器打开 http://127.0.0.1:18765/
+
+# 另一个终端
+curl.exe http://127.0.0.1:18765/api/v1
+curl.exe http://127.0.0.1:18765/api/v1/session
 ```
+
+默认监听 `127.0.0.1:18765`；可用 `--bind` 和 `--port` 覆盖。M0 只提供控制面
+占位，不包含 libobs 或真实录制。
 
 ## 运行 Windows 桌面壳
 
@@ -58,7 +63,7 @@ cargo run -p luma-engine
 二进制：
 
 ```powershell
-# 终端 1：已有 luma-engine 后
+# 终端 1
 cargo run -p luma-engine
 
 # 终端 2
