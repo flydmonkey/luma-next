@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Luma</title><link rel="stylesheet" href="/app.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Luma</title><link rel="stylesheet" href="/app.css"><style>[hidden]{display:none!important}#window-target-row{grid-template-columns:1fr}#window-target-row>div{grid-template-columns:auto minmax(220px,1fr) auto;gap:10px}#window-target-row select{min-width:0}</style></head>
 <body>
 <div class="app-shell">
   <aside class="rail" aria-label="页面导航">
@@ -25,18 +25,21 @@
         <div class="modes">
           <button class="mode active" data-mode="display"><b>▰</b><span>显示器</span><small>主显示器</small></button>
           <button class="mode locked" data-mode="region"><b>⌗</b><span>区域</span><small>尚未接入</small></button>
-          <button class="mode locked" data-mode="window"><b>▢</b><span>窗口</span><small>尚未接入</small></button>
+          <button class="mode" data-mode="window"><b>▢</b><span>窗口</span><small>选择应用窗口</small></button>
           <button class="mode locked" data-mode="game"><b>◇</b><span>游戏</span><small>尚未接入</small></button>
           <button class="mode locked" data-mode="audio"><b>♪</b><span>录音</span><small>尚未接入</small></button>
         </div>
       </div>
+      <div id="window-target-row" class="quick-settings" hidden>
+        <div><span>录制窗口</span><select id="window-target" aria-label="录制窗口"></select><button id="refresh-windows" class="secondary">刷新</button></div>
+      </div>
       <div class="quick-settings">
-        <div><span>系统声</span><strong>开启</strong><button class="switch on" aria-label="系统声已开启" disabled><i></i></button></div>
-        <div><span>麦克风</span><strong>尚未接入</strong><button class="switch" aria-label="麦克风尚未接入" disabled><i></i></button></div>
+        <div><span>系统声</span><strong id="system-audio-label">开启</strong><button id="system-audio-toggle" class="switch on" aria-label="切换系统声"><i></i></button></div>
+        <div><span>麦克风</span><strong id="microphone-label">关闭</strong><button id="microphone-toggle" class="switch" aria-label="切换麦克风"><i></i></button></div>
         <div><span>清晰度 / 编码器</span><strong>1080p · 30 fps</strong><span id="home-encoder" class="pill">x264</span></div>
       </div>
       <button id="record-button" class="record-button"><span></span><label>开始录制</label></button>
-      <p class="capability">当前可靠能力：主显示器全屏 + 系统音频，1080p30</p>
+      <p class="capability">当前可靠能力：主显示器或窗口 + 系统音频/麦克风，1080p30</p>
     </section>
 
     <section class="page" data-page="library" hidden>
@@ -51,8 +54,11 @@
       <form id="settings-form">
         <h2>录制</h2>
         <div class="setting-card"><div><strong>输出目录</strong><p>新录像与片库读取的位置</p></div><input id="output-directory" required></div>
-        <div class="setting-card"><div><strong>系统声</strong><p>M3 录制必须开启</p></div><button class="switch on" disabled><i></i></button></div>
-        <div class="setting-card disabled"><div><strong>麦克风</strong><p>即将支持；当前不会写入麦克风轨道</p></div><button class="switch" disabled><i></i></button></div>
+        <div class="setting-card"><div><strong>默认模式</strong><p>窗口关闭或最小化时画面可能变黑</p></div><select id="capture-mode"><option value="display">主显示器</option><option value="window">窗口</option></select></div>
+        <div class="setting-card"><div><strong>默认窗口</strong><p>窗口模式使用；列表来自当前桌面</p></div><select id="settings-window"></select></div>
+        <div class="setting-card"><div><strong>系统声</strong><p>录制 Windows 默认输出设备</p></div><button id="settings-system-audio" type="button" class="switch on"><i></i></button></div>
+        <div class="setting-card"><div><strong>麦克风</strong><p>需要 Windows 麦克风隐私权限</p></div><button id="settings-microphone" type="button" class="switch"><i></i></button></div>
+        <div class="setting-card"><div><strong>麦克风设备</strong><p>来自 OBS/WASAPI 的当前输入设备</p></div><select id="mic-device"></select></div>
         <div class="setting-card"><div><strong>清晰度</strong><p>当前稳定编码配置</p></div><select id="quality"><option value="1080p30">1080p · 30 fps · x264</option></select></div>
         <h2>编码器</h2>
         <div class="setting-card"><div><strong>录像编码器</strong><p id="encoder-help">只显示 libobs 实际探测到的 H.264 编码器</p></div><select id="encoder" required><option value="obs_x264">Software (x264)</option></select></div>
