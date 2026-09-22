@@ -92,5 +92,13 @@ cargo run -p luma-engine -- --allow-second-instance --no-tray --port 18766
 发布目录包含并链接 libobs 及其插件，并捆绑 Gyan.dev 的 GPLv3 FFmpeg essentials
 静态构建。整体分发必须履行相应 GPL 源码提供、许可证声明等义务。包内
 `LICENSE-OBS-GPL.txt` 与 `LICENSE-FFMPEG.txt` 保留两者许可证，`README.txt` 给出
-Luma Next、OBS 与 FFmpeg 对应源码位置。代码签名、SmartScreen 商业信誉与 MSI/MSIX
-不在第一期范围内。
+Luma Next、OBS 与 FFmpeg 对应源码位置。M8 提供可选 Authenticode 挂钩，但不提供或
+伪造证书；SmartScreen 商业信誉与 MSI/MSIX 仍不在第一期范围内。
+
+## 发布检查清单
+
+1. `scripts/pack.ps1` 生成目录与 ZIP；需要时用 `-SkipFfplay`，但不得删除 ffmpeg/ffprobe。
+2. 配置证书 thumbprint 后执行 `pack.ps1 -Sign`；无证书应看到明确 SKIP。
+3. 执行 `scripts/release-smoke.ps1`，验证安装、HKCU Run、旁路 ffprobe、录音 start/stop 和卸载。
+4. 执行 `scripts/record-regression.ps1`，确认 audio-only 与仓内 DX11 game_capture 探针均 PASS。
+5. 发布前另在真实游戏、麦克风和目标 DPI/多屏环境手测。

@@ -163,6 +163,7 @@ curl.exe -X DELETE http://127.0.0.1:18765/api/v1/library/luma-123.mkv
 | M5 | 麦克风混音 + OBS WGC 窗口捕获（完成） |
 | M6 | 区域 + 多显示器 + 暂停/恢复 + 全局热键（完成） |
 | M7 | 原生桌面区域框选 + OBS 游戏捕获（完成；无兼容游戏时回归明确 skip） |
+| M8 | 纯音频 + DX11 游戏靶 + 发行冒烟/可选签名（完成） |
 
 ## 相关文档
 
@@ -177,6 +178,7 @@ curl.exe -X DELETE http://127.0.0.1:18765/api/v1/library/luma-123.mkv
 - [M5 麦克风与窗口捕获](docs/M5.md)
 - [M6 区域、多显示器、暂停与热键](docs/M6.md)
 - [M7 原生区域框选与游戏捕获](docs/M7.md)
+- [M8 纯音频、游戏靶与发行冒烟](docs/M8.md)
 - [录制计时口径](docs/TIMING.md)
 - [Windows 托盘](docs/TRAY.md)
 - [安装与发布](docs/INSTALL.md)
