@@ -77,7 +77,8 @@
       navigate(page) {
         const frame = document.getElementById('engine');
         if (!frame.src) return;
-        frame.contentWindow.location.hash = page === 'settings' ? '#/settings' : page === 'library' ? '#/library' : '#/';
+        const route = page === 'settings' ? '#/settings' : page === 'library' ? '#/library' : '#/';
+        frame.src = `${frame.src.split('#')[0]}${route}`;
       },
       setEngineReady(ready, origin) {
         const frame = document.getElementById('engine');
