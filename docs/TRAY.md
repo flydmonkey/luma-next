@@ -39,25 +39,28 @@ cargo run -p luma-engine -- --allow-second-instance --no-tray --port 18766
 
 ## 当前用户登录自启
 
-推荐先构建位置稳定的发布版，再用该 exe 自己安装：
+推荐通过发布脚本安装稳定、自包含的运行目录：
 
 ```powershell
-cargo build --release -p luma-engine
-.\target\release\luma-engine.exe --install-autostart
+powershell -ExecutionPolicy Bypass -File .\scripts\pack.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -SkipPack
 
 # 检查
 Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name LumaNext
 
 # 卸载
-.\target\release\luma-engine.exe --uninstall-autostart
+powershell -ExecutionPolicy Bypass -File .\scripts\uninstall.ps1
 ```
 
 安装位置是
 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 的 `LumaNext` 字符串值，内容为
-带引号的当前 exe 绝对路径，不包含 `cargo run`、`--no-tray` 或 `--open-ui`。因此用户
-登录后启动正常托盘，但不会自动弹浏览器。命令也可对 debug exe 使用，不过清理
-`target` 后路径会失效，只适合短期开发验证。移动或升级 exe 后应从新位置重新安装。
-卸载只删除 `LumaNext` 值，不删除整个 Run 键。
+带引号的 `%LOCALAPPDATA%\LumaNext\bin\luma-engine.exe`，不包含 `cargo run`、
+`--no-tray` 或 `--open-ui`。因此用户登录后启动正常托盘，但不会自动弹浏览器。
+直接对 `target\debug` 或 `target\release` 中的开发 exe 执行 `--install-autostart` 仍允许，
+但引擎会警告该路径不稳定。卸载只删除 `LumaNext` 值，不删除整个 Run 键。
+
+源码开发与已安装实例共用产品单例。调试前应从托盘退出已安装实例；需要并行时使用
+`--allow-second-instance --no-tray --port <独立端口>`。完整布局见 [INSTALL.md](INSTALL.md)。
 
 ## 菜单
 
@@ -84,5 +87,6 @@ Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name Lum
 
 1. 启动 `luma-engine`，再启动第二次；确认第二个进程退出码为 2，首实例 API 仍可用。
 2. 用独立端口加 `--allow-second-instance`，确认开发实例可按需并行。
-3. install 后读取上述 HKCU 值，确认是当前 exe；uninstall 后确认值不存在。
+3. 运行 `scripts/install.ps1` 后读取上述 HKCU 值，确认指向稳定安装路径；再次 install
+   确认可覆盖升级；uninstall 后确认值与发布文件均不存在。
 4. 登录自启的真实发布验收应注销再登录，确认只出现一个托盘且不会自动打开浏览器。

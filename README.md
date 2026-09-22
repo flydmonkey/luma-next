@@ -29,7 +29,7 @@ luma-next/
   crates/          # Rust workspace
     luma-engine/   # localhost HTTP 引擎
   web/             # 正式 WebUI（录制 / 片库 / 设置）
-  scripts/         # 可重复录制回归
+  scripts/         # 打包、安装、卸载与可重复录制回归
   docs/
     BOUNDARY.md    # 技术边界
     CADENCE.md     # 开发节奏与里程碑
@@ -59,6 +59,19 @@ curl.exe http://127.0.0.1:18765/api/v1/session
 
 默认监听 `127.0.0.1:18765`；可用 `--bind` 和 `--port` 覆盖。编译时可用
 `LUMA_OBS_SOURCE` 与 `LUMA_OBS_RUNDIR` 覆盖 OBS 源码/运行目录。
+
+日常使用推荐安装到固定的当前用户目录，而不是从会被 Cargo 清理的 `target` 启动：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\pack.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -SkipPack
+
+# 升级：用新源码重新执行同一组命令；卸载：
+powershell -ExecutionPolicy Bypass -File .\scripts\uninstall.ps1
+```
+
+安装后入口固定为 `%LOCALAPPDATA%\LumaNext\bin\luma-engine.exe`，OBS 运行时位于同一
+安装根下的 `obs\`，无需设置 `LUMA_OBS_RUNDIR`。详见 [安装与发布](docs/INSTALL.md)。
 
 最小录制闭环：
 
@@ -96,9 +109,9 @@ cargo run -p luma-engine -- --open-ui
 # CI / 回归 / 无交互桌面会话
 cargo run -p luma-engine -- --no-tray
 
-# 为当前用户安装/卸载登录自启（推荐先 cargo build --release）
-.\target\release\luma-engine.exe --install-autostart
-.\target\release\luma-engine.exe --uninstall-autostart
+# 已安装版本的登录自启由 install/uninstall 脚本管理
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\uninstall.ps1
 ```
 
 菜单提供打开控制页、开始/停止录制、状态和退出；录制动作与 HTTP 共用同一份 session
@@ -147,4 +160,5 @@ curl.exe -X DELETE http://127.0.0.1:18765/api/v1/library/luma-123.mkv
 - [WebUI 迁移说明](docs/WEBUI.md)
 - [M4 硬件编码](docs/M4.md)
 - [Windows 托盘](docs/TRAY.md)
+- [安装与发布](docs/INSTALL.md)
 - [设计规格 2026-09-22](docs/superpowers/specs/2026-09-22-luma-next-design.md)
