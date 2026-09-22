@@ -19,6 +19,10 @@ x64 zip。`-NoZip` 仅组装目录。`dist/` 是生成物，不进入 Git。
 
 ```text
 LumaNext/
+  Install.cmd
+  Install.ps1
+  Uninstall.cmd
+  Uninstall.ps1
   bin/
     luma-engine.exe
     ffmpeg.exe
@@ -49,10 +53,20 @@ SHA-256 `60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba` 后�
 `ffmpeg\bin`，最后才是 PATH。预留的 ffmpeg 解析规则同理使用 `LUMA_FFMPEG`；目前
 录制主路径只直接调用 ffprobe，ffmpeg/ffplay 用于后续转码、抽帧和人工诊断。
 
-## 安装、升级与卸载
+## 普通用户安装、升级与卸载
+
+发布 ZIP 是自包含安装包。完整解压后双击根目录的 `Install.cmd` 即可；CMD 会自动使用
+`PowerShell -NoProfile -ExecutionPolicy Bypass` 调用同目录安装逻辑，用户不需要管理员权限、
+Cargo、源码仓库或手工修改执行策略。安装完成默认立即启动托盘，并注册当前用户登录自启。
+
+升级前从托盘退出 Luma Next，完整解压新版并再次双击 `Install.cmd`。卸载时可双击原解压包
+或 `%LOCALAPPDATA%\LumaNext` 内的 `Uninstall.cmd`。卸载删除发行文件和 HKCU Run 项，但保留
+`%USERPROFILE%\Videos\Luma` 中的录像以及 `%APPDATA%` 中的本地设置。
+
+## 开发者安装脚本
 
 ```powershell
-# 默认会先重新 pack；已有 dist 时可加 -SkipPack
+# 源码仓库使用：默认先 pack；已有 dist 时可加 -SkipPack
 powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 
 # 升级：退出托盘后，用新版本重复执行
@@ -62,8 +76,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -SkipPack
 powershell -ExecutionPolicy Bypass -File .\scripts\uninstall.ps1
 ```
 
-稳定安装根为 `%LOCALAPPDATA%\LumaNext`。install 先在独立目录暂存包，并只替换自己管理的
-`bin`、`obs`、manifest、README 与许可证文件，然后由已安装 exe 注册：
+仓库中的 `scripts/install.ps1`、`scripts/uninstall.ps1` 是开发/CI 入口；发布包内的
+`Install.cmd`/`Uninstall.cmd` 才是终端用户主路径。两者使用相同的稳定安装根
+`%LOCALAPPDATA%\LumaNext`。安装会先在独立目录暂存包，并只替换自己管理的发行文件，
+然后由已安装 exe 注册：
 
 ```text
 HKCU\Software\Microsoft\Windows\CurrentVersion\Run\LumaNext
@@ -99,7 +115,7 @@ Luma Next、OBS 与 FFmpeg 对应源码位置。M8 提供可选 Authenticode 挂
 
 1. `scripts/pack.ps1` 生成目录与 ZIP；需要时用 `-SkipFfplay`，但不得删除 ffmpeg/ffprobe。
 2. 配置证书 thumbprint 后执行 `pack.ps1 -Sign`；无证书应看到明确 SKIP。
-3. 执行 `scripts/release-smoke.ps1`，验证安装、HKCU Run、旁路 ffprobe、录音 start/stop 和卸载。
+3. 执行 `scripts/release-smoke.ps1`，通过包内 `Install.ps1`/`Uninstall.ps1` 验证安装、HKCU Run、旁路 ffprobe、录音 start/stop 和卸载。
 4. 执行 `scripts/record-regression.ps1`，确认 audio-only 与仓内 DX11 game_capture 探针均 PASS。
 5. 发布前另在真实游戏、麦克风和目标 DPI/多屏环境手测。
 

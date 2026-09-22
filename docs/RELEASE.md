@@ -32,6 +32,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\publish.ps1 `
 
 输出包含版本 ZIP、`SHA256SUMS` 和 `RELEASE-NOTES.md`。若签名环境已配置，脚本要求引擎
 Authenticode 状态为 `Valid`；否则立即失败。FFmpeg 第三方二进制默认不由 Luma 重新签名。
+ZIP 根目录必须包含 `Install.cmd`、`Install.ps1`、`Uninstall.cmd`、`Uninstall.ps1`；发布员
+应从临时解压目录运行包内安装器完成一次升级/卸载冒烟，而不是要求用户访问源码仓库。
 
 ## 3. 创建 GitHub Draft Release
 
@@ -64,4 +66,5 @@ powershell -ExecutionPolicy Bypass -File .\scripts\github-release.ps1 `
 1. `SHA256SUMS` 与 ZIP 一致；
 2. 发布说明中的 Signed/Unsigned 与 `Get-AuthenticodeSignature` 一致；
 3. GPL/OBS/FFmpeg 许可证和源码位置仍在包中；
-4. 在 GitHub 网页检查 Draft 的正文、附件和人工清单，再手工点击 Publish。
+4. ZIP 解压后可直接双击 `Install.cmd`，安装目录内也保留可双击的 `Uninstall.cmd`；
+5. 在 GitHub 网页检查 Draft 的正文、附件和人工清单，再手工点击 Publish。

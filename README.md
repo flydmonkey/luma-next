@@ -62,15 +62,12 @@ curl.exe http://127.0.0.1:18765/api/v1/devices/audio
 默认监听 `127.0.0.1:18765`；可用 `--bind` 和 `--port` 覆盖。编译时可用
 `LUMA_OBS_SOURCE` 与 `LUMA_OBS_RUNDIR` 覆盖 OBS 源码/运行目录。
 
-日常使用推荐安装到固定的当前用户目录，而不是从会被 Cargo 清理的 `target` 启动：
+普通用户下载发布 ZIP 后完整解压，双击根目录 `Install.cmd` 即可安装；无需管理员权限、
+Cargo 或手动调整 PowerShell 执行策略。升级时退出托盘后，用新版重复安装。卸载可双击
+解压包或 `%LOCALAPPDATA%\LumaNext` 中的 `Uninstall.cmd`，录像与本地设置会保留。
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\pack.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -SkipPack
-
-# 升级：用新源码重新执行同一组命令；卸载：
-powershell -ExecutionPolicy Bypass -File .\scripts\uninstall.ps1
-```
+源码开发者仍可运行 `scripts\pack.ps1`、`scripts\install.ps1` 和 `scripts\uninstall.ps1`；
+这些仓库脚本会负责打包或 CI 参数，不是面向终端用户的安装入口。
 
 安装后入口固定为 `%LOCALAPPDATA%\LumaNext\bin\luma-engine.exe`，OBS 运行时位于同一
 安装根下的 `obs\`；FFmpeg 命令行工具与引擎同在 `bin\`。无需设置
@@ -120,9 +117,7 @@ cargo run -p luma-engine -- --open-ui
 # CI / 回归 / 无交互桌面会话
 cargo run -p luma-engine -- --no-tray
 
-# 已安装版本的登录自启由 install/uninstall 脚本管理
-powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\uninstall.ps1
+# 发布 ZIP：双击 Install.cmd；卸载时双击 Uninstall.cmd
 ```
 
 菜单提供打开控制页、开始/停止、暂停/恢复、状态和退出；默认全局热键为
