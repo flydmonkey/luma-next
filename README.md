@@ -7,14 +7,14 @@
 ## 架构
 
 ```
-WebUI (browser / luma-shell)  --HTTP-->  luma-engine (Rust)
+WebUI (default browser)  --HTTP-->  luma-engine (Rust + system tray)
                                 |
                             libobs (capture / encode / mux)
                                 |
                             output file (e.g. mp4)
 ```
 
-- 生产方向保持单仓单进程；当前开发壳与引擎分开启动，接口保持可合并
+- 单进程引擎同时拥有 HTTP、libobs 与 Windows 系统托盘；浏览器只是控制客户端
 - 平台：Windows 优先验收；结构预留跨平台
 - 许可：因链接 libobs，本项目按 **GPL** 约束分发（详见下文）
 
@@ -28,13 +28,12 @@ WebUI (browser / luma-shell)  --HTTP-->  luma-engine (Rust)
 luma-next/
   crates/          # Rust workspace
     luma-engine/   # localhost HTTP 引擎
-    luma-shell/    # Windows WebView2 薄壳
   web/             # 正式 WebUI（录制 / 片库 / 设置）
   scripts/         # 可重复录制回归
   docs/
     BOUNDARY.md    # 技术边界
     CADENCE.md     # 开发节奏与里程碑
-    SHELL.md       # 桌面壳运行与验收
+    TRAY.md        # 系统托盘运行与验收
     superpowers/specs/  # 设计规格
   README.md
 ```
@@ -52,7 +51,8 @@ luma-next/
 ```powershell
 cargo run -p luma-engine
 
-# 另一个终端
+# 默认不会自动弹浏览器：从托盘选择“打开控制页”，或直接访问
+start http://127.0.0.1:18765/
 curl.exe http://127.0.0.1:18765/api/v1
 curl.exe http://127.0.0.1:18765/api/v1/session
 ```
@@ -84,25 +84,22 @@ powershell -ExecutionPolicy Bypass -File .\scripts\record-regression.ps1 -Encode
 脚本再次用 ffprobe 独立检查音视频流、分辨率、文件大小以及媒体/墙钟时长。硬案例建议
 先在 Chrome 播放一段动态且有声音的视频，再运行脚本。
 
-## 运行 Windows 桌面壳
-
-开发期采用“先引擎、后壳”的明确流程；壳不会猜测或拉起一个未定义路径的引擎
-二进制：
+## 托盘与无界面运行
 
 ```powershell
-# 终端 1
+# 默认：HTTP + libobs + 系统托盘
 cargo run -p luma-engine
 
-# 终端 2
-cargo run -p luma-shell
+# 自动打开默认浏览器
+cargo run -p luma-engine -- --open-ui
+
+# CI / 回归 / 无交互桌面会话
+cargo run -p luma-engine -- --no-tray
 ```
 
-壳固定加载 `http://127.0.0.1:18765/`。端口未监听时会显示错误页，启动引擎后点击
-“重试”即可，不会停在 WebView2 的白屏。开发机需安装 Microsoft Edge WebView2
-Runtime（Windows 11 通常已包含）。详细手测步骤见 [桌面壳说明](docs/SHELL.md)。
-
-`luma-shell` 自身不链接 libobs，也不改变录制管线。整个仓库未来一旦链接 libobs，
-分发仍须遵守上文的 GPL 要求；拆出薄壳不规避该义务。
+菜单提供打开控制页、开始/停止录制、状态和退出；录制动作与 HTTP 共用同一份 session
+状态及 stop 校验。项目不再包含 WebView2 桌面壳，也不依赖 WebView2 Runtime。详见
+[托盘说明](docs/TRAY.md)。
 
 ## API
 
@@ -142,4 +139,5 @@ curl.exe -X DELETE http://127.0.0.1:18765/api/v1/library/luma-123.mkv
 - [M3 API 与持久化](docs/M3.md)
 - [WebUI 迁移说明](docs/WEBUI.md)
 - [M4 硬件编码](docs/M4.md)
+- [Windows 托盘](docs/TRAY.md)
 - [设计规格 2026-09-22](docs/superpowers/specs/2026-09-22-luma-next-design.md)
