@@ -30,16 +30,24 @@
 - 不承诺自研路径上的 Intel/AMD 对等「修厂商」
 - 不把 Mac / Linux 列入第一期验收（仅结构预留）
 - 不做推流、滤镜市场、插件商城
-- 不在第一期上 Tauri/WinUI 桌面壳（引擎稳定后再说）
-- 旧 
-ecord 仅归档；可摘产品教训与 API 习惯，不搬 MF 代码
+- 不把 WinUI 迁入本仓，也不在壳中复制录制后端。2026-09-22 起允许独立的
+  `luma-shell` 薄壳：它只托管 localhost WebUI、提供窗口铬和系统入口，仍由
+  `luma-engine` 独占录制能力。
+- 旧 `record` 仅归档；可摘产品教训与 API 习惯，不搬 MF 代码
+
+## 桌面薄壳边界（2026-09-22 补充）
+
+- 壳是 Windows-first 的 WebView2 客户端，不是第二个业务后端。
+- 壳仅可访问固定的 `http://127.0.0.1:18765/`，不开放公网调试或任意导航。
+- 当前开发形态要求先启动引擎；未来可把 HTTP 服务与壳合并到同一进程，但 HTTP
+  契约和录制管线所有权不变。
+- 壳任务不引入 libobs、编码器、采集或 M1 录制范围。
 
 ## 与旧 Luma 的关系
 
-| | 旧 Luma (
-ecord) | Luma Next |
+| | 旧 Luma (`record`) | Luma Next |
 |---|---|---|
-| UI | WinUI + WebUI | WebUI（壳后置） |
+| UI | WinUI + WebUI | WebUI + 可选薄壳 |
 | 引擎 | 自研 DXGI/WGC + MF | 嵌 libobs |
 | 控制 | LAN /api/v1 | 同形子集，逐步对齐 |
 | 许可 | 自有代码为主 | **GPL（因 libobs）** |

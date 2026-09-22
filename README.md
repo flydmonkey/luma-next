@@ -6,15 +6,15 @@
 
 ## 架构
 
-`
-WebUI (browser)  --HTTP-->  luma-engine (Rust)
+```
+WebUI (browser / luma-shell)  --HTTP-->  luma-engine (Rust)
                                 |
                             libobs (capture / encode / mux)
                                 |
                             output file (e.g. mp4)
-`
+```
 
-- 单仓单进程；引擎可托管静态 WebUI
+- 生产方向保持单仓单进程；当前开发壳与引擎分开启动，接口保持可合并
 - 平台：Windows 优先验收；结构预留跨平台
 - 许可：因链接 libobs，本项目按 **GPL** 约束分发（详见下文）
 
@@ -24,16 +24,18 @@ WebUI (browser)  --HTTP-->  luma-engine (Rust)
 
 ## 仓库布局
 
-`
+```
 luma-next/
-  crates/          # Rust 引擎与 workspace（后续）
+  crates/          # Rust workspace
+    luma-shell/    # Windows WebView2 薄壳
   web/             # WebUI 静态资源或子项目（后续接入）
   docs/
     BOUNDARY.md    # 技术边界
     CADENCE.md     # 开发节奏与里程碑
+    SHELL.md       # 桌面壳运行与验收
     superpowers/specs/  # 设计规格
   README.md
-`
+```
 
 ## 要求（开发机）
 
@@ -43,13 +45,32 @@ luma-next/
 
 ## 快速开始
 
-> M0 落地前此处为占位。
+> M0 落地前引擎命令为预期形态。
 
-`ash
-# 预期形态（实现后）：
+```bash
 cargo run -p luma-engine
-# 浏览器打开 http://127.0.0.1:<port>/
-`
+# 浏览器打开 http://127.0.0.1:18765/
+```
+
+## 运行 Windows 桌面壳
+
+开发期采用“先引擎、后壳”的明确流程；壳不会猜测或拉起一个未定义路径的引擎
+二进制：
+
+```powershell
+# 终端 1：已有 luma-engine 后
+cargo run -p luma-engine
+
+# 终端 2
+cargo run -p luma-shell
+```
+
+壳固定加载 `http://127.0.0.1:18765/`。端口未监听时会显示错误页，启动引擎后点击
+“重试”即可，不会停在 WebView2 的白屏。开发机需安装 Microsoft Edge WebView2
+Runtime（Windows 11 通常已包含）。详细手测步骤见 [桌面壳说明](docs/SHELL.md)。
+
+`luma-shell` 自身不链接 libobs，也不改变录制管线。整个仓库未来一旦链接 libobs，
+分发仍须遵守上文的 GPL 要求；拆出薄壳不规避该义务。
 
 ## API
 
