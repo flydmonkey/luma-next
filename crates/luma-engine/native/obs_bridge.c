@@ -68,6 +68,13 @@ static bool load_module(const char *root, const char *name, char *error, size_t 
     return true;
 }
 
+static void load_optional_module(const char *root, const char *name)
+{
+    char error[512] = {0};
+    if (!load_module(root, name, error, sizeof(error)))
+        blog(LOG_WARNING, "Luma optional module unavailable: %s", error);
+}
+
 static void release_recording(struct luma_obs *ctx)
 {
     if (ctx->output) {
@@ -152,6 +159,8 @@ struct luma_obs *luma_obs_initialize(const char *root, const char *config_path, 
         !load_module(root, "obs-ffmpeg", error, error_size)) {
         goto fail;
     }
+    load_optional_module(root, "obs-qsv11");
+    load_optional_module(root, "obs-nvenc");
     obs_post_load_modules();
 
     obs_data_t *monitor_settings = obs_data_create();
@@ -201,20 +210,30 @@ fail:
     return NULL;
 }
 
-bool luma_obs_start(struct luma_obs *ctx, const char *path, char *error, size_t error_size)
+bool luma_obs_encoder_available(struct luma_obs *ctx, const char *wanted)
 {
-    if (!ctx || ctx->output) {
-        set_error(error, error_size, "recording is already active");
-        return false;
+    (void)ctx;
+    const char *id = NULL;
+    for (size_t index = 0; obs_enum_encoder_types(index, &id); ++index) {
+        uint32_t caps = obs_get_encoder_caps(id);
+        if (strcmp(id, wanted) == 0 && obs_get_encoder_type(id) == OBS_ENCODER_VIDEO &&
+            strcmp(obs_get_encoder_codec(id), "h264") == 0 &&
+            !(caps & (OBS_ENCODER_CAP_DEPRECATED | OBS_ENCODER_CAP_INTERNAL)))
+            return true;
     }
+    return false;
+}
 
+static bool start_with_encoder(struct luma_obs *ctx, const char *path, const char *encoder_id,
+                               char *error, size_t error_size)
+{
     obs_data_t *video_settings = obs_data_create();
     obs_data_set_string(video_settings, "rate_control", "CBR");
     obs_data_set_int(video_settings, "bitrate", 6000);
     obs_data_set_int(video_settings, "keyint_sec", 2);
     obs_data_set_string(video_settings, "preset", "veryfast");
     obs_data_set_string(video_settings, "profile", "high");
-    ctx->video_encoder = obs_video_encoder_create("obs_x264", "Luma H.264", video_settings, NULL);
+    ctx->video_encoder = obs_video_encoder_create(encoder_id, "Luma H.264", video_settings, NULL);
     obs_data_release(video_settings);
 
     obs_data_t *audio_settings = obs_data_create();
@@ -250,6 +269,36 @@ bool luma_obs_start(struct luma_obs *ctx, const char *path, char *error, size_t 
         release_recording(ctx);
         return false;
     }
+    return true;
+}
+
+bool luma_obs_start(struct luma_obs *ctx, const char *path, const char *requested,
+                    char *active, size_t active_size, char *fallback, size_t fallback_size,
+                    char *error, size_t error_size)
+{
+    if (!ctx || ctx->output) {
+        set_error(error, error_size, "recording is already active");
+        return false;
+    }
+    char first_error[2048] = {0};
+    const char *forced_failure = getenv("LUMA_FORCE_ENCODER_FAILURE");
+    bool force_this_encoder = forced_failure && strcmp(forced_failure, requested) == 0;
+    if (force_this_encoder)
+        snprintf(first_error, sizeof(first_error), "forced encoder failure for regression: %s", requested);
+    if (!force_this_encoder && start_with_encoder(ctx, path, requested, first_error, sizeof(first_error))) {
+        set_error(active, active_size, requested);
+        if (fallback && fallback_size) fallback[0] = 0;
+        return true;
+    }
+    if (strcmp(requested, "obs_x264") == 0) {
+        set_error(error, error_size, first_error);
+        return false;
+    }
+    blog(LOG_WARNING, "Luma encoder %s failed, falling back to obs_x264: %s", requested, first_error);
+    if (!start_with_encoder(ctx, path, "obs_x264", error, error_size))
+        return false;
+    set_error(active, active_size, "obs_x264");
+    set_error(fallback, fallback_size, first_error);
     return true;
 }
 

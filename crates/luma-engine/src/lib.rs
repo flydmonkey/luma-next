@@ -17,7 +17,7 @@ use std::{
     time::{Instant, UNIX_EPOCH},
 };
 
-pub use recorder::{ObsRecorder, RecordingValidation};
+pub use recorder::{EncoderInfo, ObsRecorder, RecordingValidation};
 use settings::{Settings, SettingsStore, default_output_directory, default_settings_path};
 
 #[derive(Serialize)]
@@ -39,6 +39,10 @@ struct Session {
     output_path: Option<String>,
     error: Option<String>,
     validation: Option<RecordingValidation>,
+    encoder_requested: Option<String>,
+    encoder_active: Option<String>,
+    encoder_fallback: bool,
+    fallback_reason: Option<String>,
     #[serde(skip)]
     started: Option<Instant>,
 }
@@ -50,6 +54,10 @@ impl Default for Session {
             output_path: None,
             error: None,
             validation: None,
+            encoder_requested: None,
+            encoder_active: None,
+            encoder_fallback: false,
+            fallback_reason: None,
             started: None,
         }
     }
@@ -111,6 +119,7 @@ fn router(controller: Controller) -> Router {
         .route("/app.js", get(script))
         .route("/dev", get(dev_index))
         .route("/api/v1", get(probe))
+        .route("/api/v1/encoders", get(encoders))
         .route("/api/v1/session", get(session))
         .route("/api/v1/session/start", post(start_recording))
         .route("/api/v1/session/stop", post(stop_recording))
@@ -149,6 +158,22 @@ async fn probe() -> Json<Envelope<Probe>> {
         error: None,
     })
 }
+#[derive(Serialize)]
+struct Encoders {
+    encoders: Vec<EncoderInfo>,
+}
+async fn encoders(State(state): State<AppState>) -> Response {
+    let controller = state.lock().expect("controller mutex poisoned");
+    let Some(recorder) = controller.recorder.as_ref() else {
+        return error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "libobs recorder is not initialized",
+        );
+    };
+    success_response(Encoders {
+        encoders: recorder.encoders(),
+    })
+}
 async fn session(State(state): State<AppState>) -> Json<Envelope<Session>> {
     let data = state
         .lock()
@@ -168,6 +193,7 @@ struct StartRequest {
     system_audio: Option<bool>,
     microphone: Option<bool>,
     quality: Option<String>,
+    encoder: Option<String>,
 }
 
 async fn start_recording(
@@ -210,6 +236,25 @@ async fn start_recording(
             "only quality 1080p30 is supported",
         );
     }
+    if controller.recorder.is_none() {
+        return error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "libobs recorder is not initialized",
+        );
+    }
+    let requested_encoder = request.encoder.unwrap_or(configured.encoder);
+    let available = controller.recorder.as_ref().is_some_and(|recorder| {
+        recorder
+            .encoders()
+            .iter()
+            .any(|item| item.available && item.id == requested_encoder)
+    });
+    if !available {
+        return error_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("encoder {requested_encoder} is not available"),
+        );
+    }
     let output_directory = PathBuf::from(configured.output_directory);
     let Some(recorder) = controller.recorder.as_mut() else {
         return error_response(
@@ -217,14 +262,19 @@ async fn start_recording(
             "libobs recorder is not initialized",
         );
     };
-    match recorder.start(&output_directory) {
-        Ok(path) => {
+    match recorder.start(&output_directory, &requested_encoder) {
+        Ok(start) => {
+            let fallback_reason = start.fallback_reason.clone();
             controller.session = Session {
                 state: "recording",
                 elapsed_seconds: 0.0,
-                output_path: Some(path.to_string_lossy().into_owned()),
+                output_path: Some(start.path.to_string_lossy().into_owned()),
                 error: None,
                 validation: None,
+                encoder_requested: Some(requested_encoder),
+                encoder_active: Some(start.active_encoder),
+                encoder_fallback: fallback_reason.is_some(),
+                fallback_reason,
                 started: Some(Instant::now()),
             };
             success_response(controller.session.snapshot())
@@ -356,6 +406,22 @@ async fn put_settings(State(state): State<AppState>, Json(settings): Json<Settin
         return error_response(
             StatusCode::CONFLICT,
             "settings cannot change while recording",
+        );
+    }
+    let encoder_available =
+        controller
+            .recorder
+            .as_ref()
+            .map_or(settings.encoder == "obs_x264", |recorder| {
+                recorder
+                    .encoders()
+                    .iter()
+                    .any(|item| item.available && item.id == settings.encoder)
+            });
+    if !encoder_available {
+        return error_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("encoder {} is not available", settings.encoder),
         );
     }
     match controller.settings.save(settings.clone()) {

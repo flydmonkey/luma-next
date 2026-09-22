@@ -8,6 +8,8 @@ pub struct Settings {
     pub record_system_audio: bool,
     pub record_microphone: bool,
     pub quality: String,
+    #[serde(default = "default_encoder")]
+    pub encoder: String,
 }
 
 impl Settings {
@@ -17,6 +19,7 @@ impl Settings {
             record_system_audio: true,
             record_microphone: false,
             quality: "1080p30".into(),
+            encoder: default_encoder(),
         }
     }
 
@@ -34,8 +37,15 @@ impl Settings {
         if self.quality != "1080p30" {
             return Err("only quality 1080p30 is currently supported".into());
         }
+        if self.encoder.is_empty() {
+            return Err("encoder cannot be empty".into());
+        }
         Ok(())
     }
+}
+
+fn default_encoder() -> String {
+    "obs_x264".into()
 }
 
 pub struct SettingsStore {

@@ -21,9 +21,15 @@ unsafe extern "C" {
     fn luma_obs_start(
         context: *mut c_void,
         path: *const c_char,
+        requested: *const c_char,
+        active: *mut c_char,
+        active_size: usize,
+        fallback: *mut c_char,
+        fallback_size: usize,
         error: *mut c_char,
         error_size: usize,
     ) -> bool;
+    fn luma_obs_encoder_available(context: *mut c_void, id: *const c_char) -> bool;
     fn luma_obs_stop(
         context: *mut c_void,
         encoded_frames: *mut u32,
@@ -42,6 +48,22 @@ pub struct RecordingValidation {
     pub wall_seconds: f64,
     pub encoded_frames: u32,
     pub bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EncoderInfo {
+    pub id: String,
+    pub name: String,
+    pub available: bool,
+    pub hardware: bool,
+    pub vendor: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct RecordingStart {
+    pub path: PathBuf,
+    pub active_encoder: String,
+    pub fallback_reason: Option<String>,
 }
 
 pub struct ObsRecorder {
@@ -90,7 +112,26 @@ impl ObsRecorder {
             .ok_or_else(|| read_error(&error))
     }
 
-    pub fn start(&mut self, directory: &Path) -> Result<PathBuf, String> {
+    pub fn encoders(&self) -> Vec<EncoderInfo> {
+        encoder_candidates()
+            .into_iter()
+            .map(|(id, name, hardware, vendor)| {
+                let id_string = CString::new(id).expect("static encoder id");
+                let available = unsafe {
+                    luma_obs_encoder_available(self.context.as_ptr(), id_string.as_ptr())
+                };
+                EncoderInfo {
+                    id: id.into(),
+                    name: name.into(),
+                    available,
+                    hardware,
+                    vendor: vendor.map(str::to_string),
+                }
+            })
+            .collect()
+    }
+
+    pub fn start(&mut self, directory: &Path, encoder: &str) -> Result<RecordingStart, String> {
         if self.active.is_some() {
             return Err("recording is already active".into());
         }
@@ -106,11 +147,19 @@ impl ObsRecorder {
             .as_secs();
         let path = directory.join(format!("luma-{timestamp}.mkv"));
         let c_path = path_to_cstring(&path)?;
+        let c_encoder = CString::new(encoder).map_err(|_| "invalid encoder id".to_string())?;
+        let mut active = error_buffer();
+        let mut fallback = error_buffer();
         let mut error = error_buffer();
         let started = unsafe {
             luma_obs_start(
                 self.context.as_ptr(),
                 c_path.as_ptr(),
+                c_encoder.as_ptr(),
+                active.as_mut_ptr(),
+                active.len(),
+                fallback.as_mut_ptr(),
+                fallback.len(),
                 error.as_mut_ptr(),
                 error.len(),
             )
@@ -122,7 +171,12 @@ impl ObsRecorder {
             path: path.clone(),
             started: Instant::now(),
         });
-        Ok(path)
+        let fallback_reason = read_error(&fallback);
+        Ok(RecordingStart {
+            path,
+            active_encoder: read_error(&active),
+            fallback_reason: (!fallback_reason.is_empty()).then_some(fallback_reason),
+        })
     }
 
     pub fn stop(&mut self) -> Result<(PathBuf, RecordingValidation), String> {
@@ -149,6 +203,21 @@ impl ObsRecorder {
         let validation = validate_recording(&active.path, wall, encoded_frames, reported_bytes)?;
         Ok((active.path, validation))
     }
+}
+
+fn encoder_candidates() -> [(&'static str, &'static str, bool, Option<&'static str>); 5] {
+    [
+        ("obs_x264", "Software (x264)", false, None),
+        ("h264_texture_amf", "AMD HW H.264 (AMF)", true, Some("AMD")),
+        ("jim_nvenc", "NVIDIA NVENC H.264", true, Some("NVIDIA")),
+        (
+            "ffmpeg_nvenc",
+            "NVIDIA NVENC H.264 (FFmpeg)",
+            true,
+            Some("NVIDIA"),
+        ),
+        ("obs_qsv11", "Intel Quick Sync H.264", true, Some("Intel")),
+    ]
 }
 
 impl Drop for ObsRecorder {
