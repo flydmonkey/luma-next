@@ -1,5 +1,6 @@
 mod recorder;
 mod settings;
+mod tools;
 
 use axum::{
     Json, Router,
@@ -591,7 +592,7 @@ fn is_recording(path: &Path) -> bool {
     )
 }
 fn probe_duration(path: &Path) -> Option<f64> {
-    let output = Command::new("ffprobe.exe")
+    let output = Command::new(tools::resolve_ffprobe())
         .args([
             "-v",
             "error",

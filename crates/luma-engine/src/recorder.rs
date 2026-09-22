@@ -9,6 +9,8 @@ use std::{
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::tools;
+
 const ERROR_CAPACITY: usize = 2048;
 
 unsafe extern "C" {
@@ -275,7 +277,8 @@ fn validate_recording(
         ));
     }
 
-    let output = Command::new("ffprobe.exe")
+    let ffprobe = tools::resolve_ffprobe();
+    let output = Command::new(&ffprobe)
         .args([
             "-v",
             "error",
@@ -286,7 +289,12 @@ fn validate_recording(
         ])
         .arg(path)
         .output()
-        .map_err(|error| format!("ffprobe is required to validate recordings: {error}"))?;
+        .map_err(|error| {
+            format!(
+                "ffprobe is required to validate recordings (tried {}): {error}. Use the official Luma Next package or install FFmpeg",
+                ffprobe.display()
+            )
+        })?;
     if !output.status.success() {
         return Err(format!(
             "ffprobe rejected {}: {}",
