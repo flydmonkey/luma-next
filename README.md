@@ -42,7 +42,9 @@ luma-next/
 
 - Windows 10/11（第一期验收平台）
 - Rust toolchain（stable）
-- 能获取与 libobs 版本匹配的 OBS 二进制（具体 bootstrap 方式在 M0 落地时写入本文）
+- 本机 OBS RelWithDebInfo 构建（默认读取
+  `C:\Users\Administrator\Projects\obs-studio\build_x64\rundir\RelWithDebInfo`）
+- `ffprobe.exe` 在 `PATH` 中，用于 stop 后强制校验音视频流与时长
 
 ## 快速开始
 
@@ -54,8 +56,21 @@ curl.exe http://127.0.0.1:18765/api/v1
 curl.exe http://127.0.0.1:18765/api/v1/session
 ```
 
-默认监听 `127.0.0.1:18765`；可用 `--bind` 和 `--port` 覆盖。M0 只提供控制面
-占位，不包含 libobs 或真实录制。
+默认监听 `127.0.0.1:18765`；可用 `--bind` 和 `--port` 覆盖。编译时可用
+`LUMA_OBS_SOURCE` 与 `LUMA_OBS_RUNDIR` 覆盖 OBS 源码/运行目录。
+
+最小录制闭环：
+
+```powershell
+curl.exe -X POST http://127.0.0.1:18765/api/v1/session/start
+Start-Sleep -Seconds 15
+curl.exe http://127.0.0.1:18765/api/v1/session
+curl.exe -X POST http://127.0.0.1:18765/api/v1/session/stop
+```
+
+输出写入 `%USERPROFILE%\Videos\Luma\luma-<timestamp>.mkv`。stop 只有在 OBS 已停止、
+文件非空、存在实际编码帧，并且 ffprobe 确认 H.264 视频、AAC 音频及可信时长后才
+返回 `ok:true`。
 
 ## 运行 Windows 桌面壳
 
@@ -90,7 +105,7 @@ Runtime（Windows 11 通常已包含）。详细手测步骤见 [桌面壳说明
 | 里程碑 | 目标 |
 |---|---|
 | M0 | HTTP 起服 + /api/v1 probe/session 占位 |
-| M1 | libobs 全屏 + 系统声录到文件 |
+| M1 | libobs 全屏 + 系统声录到文件（已完成本机验收） |
 | M2 | WebUI 对接 start/stop/状态 |
 | M3 | library / settings 持久化 |
 | M4 | 硬编选择 + 诚实降级/遥测 |

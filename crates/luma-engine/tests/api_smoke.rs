@@ -70,3 +70,28 @@ async fn root_serves_a_shell_safe_webui() {
         .expect("response body");
     assert!(String::from_utf8_lossy(&body).contains("本机引擎已连接"));
 }
+
+#[tokio::test]
+async fn start_fails_honestly_without_a_recorder_backend() {
+    let response = luma_engine::app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/session/start")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("router response");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .expect("response body");
+    let body: Value = serde_json::from_slice(&body).expect("json response");
+    assert_eq!(body["ok"], false);
+    assert!(
+        body["error"]
+            .as_str()
+            .is_some_and(|value| value.contains("libobs"))
+    );
+}

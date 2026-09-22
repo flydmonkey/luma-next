@@ -1317,6 +1317,7 @@ name = "luma-engine"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "cc",
  "clap",
  "serde",
  "serde_json",

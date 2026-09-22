@@ -15,10 +15,16 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    eprintln!(
+        "Initializing embedded libobs from {}",
+        env!("LUMA_OBS_RUNDIR")
+    );
+    let recorder = luma_engine::ObsRecorder::initialize()
+        .map_err(|error| format!("failed to initialize embedded libobs: {error}"))?;
     let address = SocketAddr::new(args.bind, args.port);
     let listener = tokio::net::TcpListener::bind(address).await?;
     eprintln!("Luma Next engine listening on http://{address}");
-    axum::serve(listener, luma_engine::app())
+    axum::serve(listener, luma_engine::app_with_recorder(recorder))
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())

@@ -43,6 +43,15 @@
   契约和录制管线所有权不变。
 - 壳任务不引入 libobs、编码器、采集或 M1 录制范围。
 
+## M1 实现说明（2026-09-22）
+
+- `luma-engine` 通过同进程 C ABI 桥接本机已构建的 libobs；不使用 obs-websocket，
+  不启动 `obs64.exe`，也不复活旧 MF 管线。
+- 第一条稳定路径固定为主显示器 WGC、默认 WASAPI 输出设备、x264/AAC 与 MKV；
+  多厂商硬编选择仍属于 M4。
+- stop 后必须以实际编码帧、文件大小及 ffprobe 音视频流/时长共同验证，验证失败的
+  文件不会被 API 宣称为成功录制。
+
 ## 与旧 Luma 的关系
 
 | | 旧 Luma (`record`) | Luma Next |
