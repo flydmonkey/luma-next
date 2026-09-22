@@ -101,6 +101,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\record-regression.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\record-regression.ps1 -Encoder amf -RequireHw
 # 跳过区域 / 暂停 / 多屏 M6 用例
 powershell -ExecutionPolicy Bypass -File .\scripts\record-regression.ps1 -SkipM6
+# 有兼容的 DirectX/OpenGL/Vulkan 游戏时，强制真实 game_capture 回归
+powershell -ExecutionPolicy Bypass -File .\scripts\record-regression.ps1 -GameTitleSubstring "My Game"
 ```
 
 脚本优先使用已安装包或 `dist` 中的 ffprobe，再回退 PATH，并独立检查音视频流、分辨率、文件大小以及媒体/墙钟时长。硬案例建议
@@ -160,6 +162,7 @@ curl.exe -X DELETE http://127.0.0.1:18765/api/v1/library/luma-123.mkv
 | M4 | 硬编探测/选择 + 诚实 x264 降级/遥测（完成） |
 | M5 | 麦克风混音 + OBS WGC 窗口捕获（完成） |
 | M6 | 区域 + 多显示器 + 暂停/恢复 + 全局热键（完成） |
+| M7 | 原生桌面区域框选 + OBS 游戏捕获（完成；无兼容游戏时回归明确 skip） |
 
 ## 相关文档
 
@@ -173,6 +176,7 @@ curl.exe -X DELETE http://127.0.0.1:18765/api/v1/library/luma-123.mkv
 - [M4 硬件编码](docs/M4.md)
 - [M5 麦克风与窗口捕获](docs/M5.md)
 - [M6 区域、多显示器、暂停与热键](docs/M6.md)
+- [M7 原生区域框选与游戏捕获](docs/M7.md)
 - [录制计时口径](docs/TIMING.md)
 - [Windows 托盘](docs/TRAY.md)
 - [安装与发布](docs/INSTALL.md)

@@ -84,6 +84,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\uninstall.ps1
 会在日志中说明组合键可能被占用，不会静默宣称可用。`--no-tray` 同时禁用热键；
 `--no-hotkeys` 只禁用热键。详见 [M6.md](M6.md)。
 
+托盘“开始录制”始终读取当前 settings，因此 M7 的区域或游戏模式也走相同 session。
+原生区域框选由浏览器控制页发起；游戏 hook 失败会进入最近错误，不会回退为窗口捕获。
+详见 [M7.md](M7.md)。
+
 ## 与旧壳的差异
 
 旧 `luma-shell` 使用 tao+wry/WebView2 承载网页和自绘窗口铬，现已从 workspace 与

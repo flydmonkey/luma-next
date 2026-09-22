@@ -24,6 +24,7 @@
 | **M4（完成）** | libobs 枚举 H.264 编码器、持久化选择、start 内诚实降级 | x264 与本机 AMF 均过 20 秒门槛；失败原因进入 session |
 | **M5（完成）** | WASAPI 麦克风混音与 OBS WGC 窗口捕获 | 系统声/麦/双开与窗口成片通过 ffprobe；无效目标明确拒绝 |
 | **M6（完成）** | 区域、多显示器、OBS 暂停与 Windows 全局热键 | 区域分辨率、暂停媒体钟、多屏或明确 skip；热键与托盘共用 session |
+| **M7（完成）** | 原生桌面区域覆盖层与真实 OBS game_capture | picker 物理坐标/DPI；兼容游戏成片或明确 hook 失败/skip，禁止 window 冒充 |
 
 ## 日常流程
 

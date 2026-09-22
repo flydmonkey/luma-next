@@ -6,6 +6,7 @@ param(
     [switch]$SkipMicrophone,
     [switch]$SkipM6,
     [string]$WindowTitleSubstring,
+    [string]$GameTitleSubstring,
     [switch]$EngineAlreadyRunning
 )
 $ErrorActionPreference = 'Stop'
@@ -33,11 +34,11 @@ function Invoke-LumaApi([string]$Path, [string]$Method = 'GET', [object]$Body = 
     return $response.data
 }
 
-function Invoke-RecordingCase([string]$EncoderId, [string]$Label, [bool]$Hardware, [string]$Mode = 'display', [string]$WindowId = '', [bool]$SystemAudio = $true, [bool]$Microphone = $false, [string]$DisplayId = 'primary', [hashtable]$Region = $null, [int]$PauseSeconds = 0) {
+function Invoke-RecordingCase([string]$EncoderId, [string]$Label, [bool]$Hardware, [string]$Mode = 'display', [string]$WindowId = '', [bool]$SystemAudio = $true, [bool]$Microphone = $false, [string]$DisplayId = 'primary', [hashtable]$Region = $null, [int]$PauseSeconds = 0, [string]$GameId = '') {
     Write-Host "[$Label] Starting a $Seconds-second recording with $EncoderId."
     $startedAt = Get-Date
     $script:recording = $true
-    $start = Invoke-LumaApi '/api/v1/session/start' 'POST' @{ mode=$Mode; display_id=$DisplayId; region=$Region; window_id=$(if($WindowId){$WindowId}else{$null}); system_audio=$SystemAudio; microphone=$Microphone; mic_device_id='default'; quality='1080p30'; encoder=$EncoderId }
+    $start = Invoke-LumaApi '/api/v1/session/start' 'POST' @{ mode=$Mode; display_id=$DisplayId; region=$Region; window_id=$(if($WindowId){$WindowId}else{$null}); game_id=$(if($GameId){$GameId}else{$null}); system_audio=$SystemAudio; microphone=$Microphone; mic_device_id='default'; quality='1080p30'; encoder=$EncoderId }
     Write-Host "[$Label] requested=$($start.encoder_requested) active=$($start.encoder_active) fallback=$($start.encoder_fallback)"
     if ($start.encoder_fallback) {
         Write-Warning "[$Label] fallback reason: $($start.fallback_reason)"
@@ -116,9 +117,17 @@ try {
         $targets=Invoke-LumaApi '/api/v1/targets';$displays=@($targets.displays);$primary=$displays|Where-Object primary|Select-Object -First 1
         if($null -eq $primary){throw 'No primary display was enumerated for M6 regression.'}
         $region=@{x=[int]$primary.x+100;y=[int]$primary.y+100;width=640;height=360}
-        Invoke-RecordingCase 'obs_x264' 'region' $false 'region' '' $true $false $primary.id $region
+        Invoke-RecordingCase 'obs_x264' 'region-pause' $false 'region' '' $true $false $primary.id $region 5
         Invoke-RecordingCase 'obs_x264' 'pause' $false 'display' '' $true $false $primary.id $null 5
         if($displays.Count -lt 2){Write-Host '[multi-monitor] SKIP: only one display is connected.' -ForegroundColor Yellow}else{Invoke-RecordingCase 'obs_x264' 'secondary-display' $false 'display' '' $true $false $displays[1].id}
+    }
+    if($GameTitleSubstring){
+        $games=@((Invoke-LumaApi '/api/v1/targets').games)
+        $game=$games|Where-Object {$_.available -and $_.title -like "*$GameTitleSubstring*"}|Select-Object -First 1
+        if($null -eq $game){throw "No OBS game_capture candidate title contains '$GameTitleSubstring'."}
+        Invoke-RecordingCase 'obs_x264' 'game-pause' $false 'game' '' $true $false 'primary' $null 5 $game.id
+    } else {
+        Write-Host '[game] SKIP: no compatible DirectX/OpenGL/Vulkan target was requested; pass -GameTitleSubstring to require a real OBS game_capture run.' -ForegroundColor Yellow
     }
 } catch {
     if($recording){try{$null=Invoke-LumaApi '/api/v1/session/stop' 'POST'}catch{}}
