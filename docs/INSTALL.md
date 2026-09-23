@@ -41,6 +41,11 @@ LumaNext/
 引擎从 `bin` 上一级自动发现 `obs`。运行时设置 `LUMA_OBS_RUNDIR` 可显式覆盖；源码
 开发则回落到编译时 rundir。包不包含 obs-studio 源码树。
 
+QSV 依赖以 OBS 构建为准：rundir `bin/64bit` 的 DLL 全部复制；若 OBS `.deps` 另含
+`vpl/libvpl/mfx/libmfx` 运行库，pack 也复制到包内 `bin` 并打印名称。若该 OBS 构建使用
+链接式 oneVPL dispatcher，deps 不会出现额外 DLL，QSV 最终可用性由 Intel 媒体驱动和
+`obs_qsv11_v2` 注册结果决定。诊断与 4K/DPI 验收见 [M10.md](M10.md)。
+
 FFmpeg 命令行工具固定使用 Gyan.dev 的 Windows x64 essentials build 9.0.2。该提供方由
 FFmpeg 官方下载页列为 Windows 二进制来源。脚本下载
 `ffmpeg-9.0.2-essentials_build.zip` 到未入库的 `third_party\ffmpeg\cache`，并验证
