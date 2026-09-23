@@ -111,6 +111,34 @@ async fn settings_round_trip_and_reject_unsupported_values() {
     let body: Value = serde_json::from_slice(&body).expect("json");
     assert_eq!(body["data"]["quality"], "1080p30");
 
+    for quality in ["1440p30", "2160p30"] {
+        let update = json!({
+            "output_directory": output,
+            "record_system_audio": true,
+            "record_microphone": false,
+            "capture_mode": "display",
+            "display_id": "primary",
+            "mic_device_id": "default",
+            "quality": quality,
+            "encoder": "obs_x264",
+            "hotkey_start_stop": "Ctrl+Shift+R",
+            "hotkey_pause_resume": "Ctrl+Shift+P"
+        });
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/v1/settings")
+                    .header("content-type", "application/json")
+                    .body(Body::from(update.to_string()))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
     let invalid = json!({"output_directory": output, "record_system_audio": true, "record_microphone": true, "quality": "1080p30"});
     let response = app
         .oneshot(

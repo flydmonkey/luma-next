@@ -61,6 +61,7 @@ struct Session {
     paused: bool,
     display_id: Option<String>,
     region: Option<RegionSettings>,
+    quality: String,
 }
 impl Default for Session {
     fn default() -> Self {
@@ -85,6 +86,7 @@ impl Default for Session {
             paused: false,
             display_id: None,
             region: None,
+            quality: "1080p30".into(),
         }
     }
 }
@@ -508,10 +510,10 @@ fn start_locked(
             "at least one of system audio or microphone must be enabled".into(),
         ));
     }
-    if quality != "1080p30" {
+    if !matches!(quality, "1080p30" | "1440p30" | "2160p30") {
         return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
-            "only quality 1080p30 is supported".into(),
+            "quality must be 1080p30, 1440p30, or 2160p30".into(),
         ));
     }
     if controller.recorder.is_none() {
@@ -656,7 +658,10 @@ fn start_locked(
             region.width, region.height, region.x, region.y
         )
     } else {
-        display.map_or_else(|| "显示器".into(), |item| item.name.clone())
+        display.map_or_else(
+            || "显示器".into(),
+            |item| format!("{} · {}×{}", item.name, item.width, item.height),
+        )
     };
     match recorder.start(
         &output_directory,
@@ -678,6 +683,7 @@ fn start_locked(
             system_audio,
             microphone,
             mic_device_id: Some(&mic_device_id),
+            quality,
         },
     ) {
         Ok(start) => {
@@ -717,6 +723,7 @@ fn start_locked(
                 paused: false,
                 display_id: display.map(|item| item.id.clone()),
                 region,
+                quality: quality.to_string(),
             };
             Ok(session_snapshot(controller))
         }

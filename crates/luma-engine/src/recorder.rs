@@ -26,6 +26,7 @@ unsafe extern "C" {
         requested: *const c_char,
         mode: *const c_char,
         target: *const c_char,
+        quality: *const c_char,
         display_width: u32,
         display_height: u32,
         region_x: i32,
@@ -43,6 +44,12 @@ unsafe extern "C" {
         error_size: usize,
     ) -> bool;
     fn luma_obs_encoder_available(context: *mut c_void, id: *const c_char) -> bool;
+    fn luma_obs_encoder_unavailable_reason(
+        context: *mut c_void,
+        id: *const c_char,
+        buffer: *mut c_char,
+        buffer_size: usize,
+    ) -> usize;
     fn luma_obs_list_property(
         context: *mut c_void,
         source_id: *const c_char,
@@ -79,6 +86,8 @@ unsafe extern "C" {
 pub struct RecordingValidation {
     pub video_stream: bool,
     pub audio_stream: bool,
+    pub video_width: Option<u64>,
+    pub video_height: Option<u64>,
     pub duration_seconds: f64,
     pub wall_seconds: f64,
     pub media_seconds: f64,
@@ -95,6 +104,7 @@ pub struct EncoderInfo {
     pub available: bool,
     pub hardware: bool,
     pub vendor: Option<String>,
+    pub unavailable_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -144,6 +154,7 @@ pub struct CaptureOptions<'a> {
     pub system_audio: bool,
     pub microphone: bool,
     pub mic_device_id: Option<&'a str>,
+    pub quality: &'a str,
 }
 
 #[derive(Debug)]
@@ -208,12 +219,27 @@ impl ObsRecorder {
                 let available = unsafe {
                     luma_obs_encoder_available(self.context.as_ptr(), id_string.as_ptr())
                 };
+                let unavailable_reason = if available {
+                    None
+                } else {
+                    let mut buffer = error_buffer();
+                    unsafe {
+                        luma_obs_encoder_unavailable_reason(
+                            self.context.as_ptr(),
+                            id_string.as_ptr(),
+                            buffer.as_mut_ptr(),
+                            buffer.len(),
+                        )
+                    };
+                    Some(read_error(&buffer))
+                };
                 EncoderInfo {
                     id: id.into(),
                     name: name.into(),
                     available,
                     hardware,
                     vendor: vendor.map(str::to_string),
+                    unavailable_reason,
                 }
             })
             .collect()
@@ -357,6 +383,7 @@ impl ObsRecorder {
             capture.display.map_or("", |display| display.id.as_str())
         };
         let c_target = CString::new(target).map_err(|_| "invalid window id".to_string())?;
+        let c_quality = CString::new(capture.quality).map_err(|_| "invalid quality".to_string())?;
         let c_mic_device = CString::new(capture.mic_device_id.unwrap_or("default"))
             .map_err(|_| "invalid microphone device id".to_string())?;
         let mut active = error_buffer();
@@ -369,6 +396,7 @@ impl ObsRecorder {
                 c_encoder.as_ptr(),
                 c_mode.as_ptr(),
                 c_target.as_ptr(),
+                c_quality.as_ptr(),
                 capture.display.map_or(0, |display| display.width),
                 capture.display.map_or(0, |display| display.height),
                 capture.region.map_or(0, |region| region.x),
@@ -496,7 +524,7 @@ fn is_obs_runtime(root: &Path) -> bool {
     root.join("data").join("libobs").is_dir() && root.join("obs-plugins").join("64bit").is_dir()
 }
 
-fn encoder_candidates() -> [(&'static str, &'static str, bool, Option<&'static str>); 5] {
+fn encoder_candidates() -> [(&'static str, &'static str, bool, Option<&'static str>); 6] {
     [
         ("obs_x264", "Software (x264)", false, None),
         ("h264_texture_amf", "AMD HW H.264 (AMF)", true, Some("AMD")),
@@ -507,7 +535,18 @@ fn encoder_candidates() -> [(&'static str, &'static str, bool, Option<&'static s
             true,
             Some("NVIDIA"),
         ),
-        ("obs_qsv11", "Intel Quick Sync H.264", true, Some("Intel")),
+        (
+            "obs_qsv11_v2",
+            "Intel Quick Sync H.264",
+            true,
+            Some("Intel"),
+        ),
+        (
+            "obs_qsv11",
+            "Intel Quick Sync H.264 (deprecated id)",
+            true,
+            Some("Intel"),
+        ),
     ]
 }
 
@@ -545,7 +584,7 @@ fn validate_recording(
             "-v",
             "error",
             "-show_entries",
-            "stream=codec_type:format=duration",
+            "stream=codec_type,width,height:format=duration",
             "-of",
             "json",
         ])
@@ -571,6 +610,11 @@ fn validate_recording(
         .ok_or_else(|| "ffprobe returned no stream list".to_string())?;
     let video_stream = streams.iter().any(|stream| stream["codec_type"] == "video");
     let audio_stream = streams.iter().any(|stream| stream["codec_type"] == "audio");
+    let video = streams
+        .iter()
+        .find(|stream| stream["codec_type"] == "video");
+    let video_width = video.and_then(|stream| stream["width"].as_u64());
+    let video_height = video.and_then(|stream| stream["height"].as_u64());
     let duration_seconds = probe["format"]["duration"]
         .as_str()
         .and_then(|value| value.parse::<f64>().ok())
@@ -597,6 +641,8 @@ fn validate_recording(
     Ok(RecordingValidation {
         video_stream,
         audio_stream,
+        video_width,
+        video_height,
         duration_seconds,
         wall_seconds,
         media_seconds,

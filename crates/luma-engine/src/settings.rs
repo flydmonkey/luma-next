@@ -84,8 +84,8 @@ impl Settings {
         if self.capture_mode == "game" && self.game_id.as_deref().unwrap_or_default().is_empty() {
             return Err("game_id is required for game capture".into());
         }
-        if self.quality != "1080p30" {
-            return Err("only quality 1080p30 is currently supported".into());
+        if !matches!(self.quality.as_str(), "1080p30" | "1440p30" | "2160p30") {
+            return Err("quality must be 1080p30, 1440p30, or 2160p30".into());
         }
         if self.encoder.is_empty() {
             return Err("encoder cannot be empty".into());

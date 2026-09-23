@@ -22,6 +22,7 @@ struct luma_obs {
     ULONGLONG recording_started_ms;
     ULONGLONG pause_started_ms;
     ULONGLONG paused_total_ms;
+    char qsv_module_error[512];
 };
 
 struct display_list {
@@ -29,6 +30,25 @@ struct display_list {
     size_t size;
     size_t written;
 };
+
+static RECT physical_monitor_rect(HMONITOR handle, const RECT *fallback)
+{
+    MONITORINFOEXA monitor = {0};
+    monitor.cbSize = sizeof(monitor);
+    DEVMODEA mode = {0};
+    mode.dmSize = sizeof(mode);
+    if (GetMonitorInfoA(handle, (LPMONITORINFO)&monitor) &&
+        EnumDisplaySettingsExA(monitor.szDevice, ENUM_CURRENT_SETTINGS, &mode, EDS_RAWMODE)) {
+        RECT physical = {
+            mode.dmPosition.x,
+            mode.dmPosition.y,
+            mode.dmPosition.x + (LONG)mode.dmPelsWidth,
+            mode.dmPosition.y + (LONG)mode.dmPelsHeight,
+        };
+        return physical;
+    }
+    return *fallback;
+}
 
 static BOOL CALLBACK append_display(HMONITOR handle, HDC dc, LPRECT rect, LPARAM parameter)
 {
@@ -45,10 +65,11 @@ static BOOL CALLBACK append_display(HMONITOR handle, HDC dc, LPRECT rect, LPARAM
         if (device.DeviceID[0]) id = device.DeviceID;
         if (device.DeviceString[0]) name = device.DeviceString;
     }
+    RECT physical = physical_monitor_rect(handle, rect);
     int result = snprintf(list->buffer + list->written, list->size - list->written,
                           "%s\t%s\t%ld\t%ld\t%ld\t%ld\t%d\n", id, name,
-                          rect->left, rect->top, rect->right - rect->left,
-                          rect->bottom - rect->top,
+                          physical.left, physical.top, physical.right - physical.left,
+                          physical.bottom - physical.top,
                           (monitor.dwFlags & MONITORINFOF_PRIMARY) != 0);
     if (result < 0 || (size_t)result >= list->size - list->written) return FALSE;
     list->written += (size_t)result;
@@ -176,6 +197,9 @@ struct luma_obs *luma_obs_initialize(const char *root, const char *config_path, 
         set_error(error, error_size, "out of memory");
         return NULL;
     }
+    if (!SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) &&
+        GetLastError() != ERROR_ACCESS_DENIED)
+        blog(LOG_WARNING, "Luma could not enable Per-Monitor V2 DPI awareness (error %lu)", GetLastError());
     if (!obs_startup("en-US", config_path, NULL)) {
         set_error(error, error_size, "obs_startup failed");
         free(ctx);
@@ -237,7 +261,8 @@ struct luma_obs *luma_obs_initialize(const char *root, const char *config_path, 
         !load_module(root, "obs-ffmpeg", error, error_size)) {
         goto fail;
     }
-    load_optional_module(root, "obs-qsv11");
+    if (!load_module(root, "obs-qsv11", ctx->qsv_module_error, sizeof(ctx->qsv_module_error)))
+        blog(LOG_WARNING, "Luma optional module unavailable: %s", ctx->qsv_module_error);
     load_optional_module(root, "obs-nvenc");
     obs_post_load_modules();
 
@@ -424,6 +449,43 @@ bool luma_obs_encoder_available(struct luma_obs *ctx, const char *wanted)
     return false;
 }
 
+size_t luma_obs_encoder_unavailable_reason(struct luma_obs *ctx, const char *wanted,
+                                           char *buffer, size_t buffer_size)
+{
+    if (!buffer || !buffer_size) return 0;
+    buffer[0] = 0;
+    if (strcmp(wanted, "obs_qsv11") == 0) {
+        snprintf(buffer, buffer_size, "OBS encoder id obs_qsv11 is deprecated; use obs_qsv11_v2");
+    } else if (strncmp(wanted, "obs_qsv11", 9) == 0 && ctx && ctx->qsv_module_error[0]) {
+        snprintf(buffer, buffer_size, "%s", ctx->qsv_module_error);
+    } else if (strncmp(wanted, "obs_qsv11", 9) == 0) {
+        snprintf(buffer, buffer_size, "Intel QSV H.264 was not registered; verify an enabled Intel GPU and its media driver");
+    } else {
+        snprintf(buffer, buffer_size, "OBS encoder %s was not registered for H.264 on this system", wanted);
+    }
+    return strlen(buffer);
+}
+
+static void quality_limit(const char *quality, uint32_t *width, uint32_t *height)
+{
+    uint32_t limit_width = 1920;
+    uint32_t limit_height = 1080;
+    if (strcmp(quality, "1440p30") == 0) {
+        limit_width = 2560;
+        limit_height = 1440;
+    } else if (strcmp(quality, "2160p30") == 0) {
+        limit_width = 3840;
+        limit_height = 2160;
+    }
+    if (*width > limit_width || *height > limit_height) {
+        double scale_x = (double)limit_width / (double)*width;
+        double scale_y = (double)limit_height / (double)*height;
+        double scale = scale_x < scale_y ? scale_x : scale_y;
+        *width = ((uint32_t)(*width * scale)) & ~1U;
+        *height = ((uint32_t)(*height * scale)) & ~1U;
+    }
+}
+
 static bool start_with_encoder(struct luma_obs *ctx, const char *path, const char *encoder_id, bool audio_only,
                                char *error, size_t error_size)
 {
@@ -447,7 +509,14 @@ static bool start_with_encoder(struct luma_obs *ctx, const char *path, const cha
     obs_data_release(output_settings);
 
     if (!ctx->video_encoder || !ctx->audio_encoder || !ctx->output) {
-        set_error(error, error_size, "failed to create OBS output or encoders");
+        char message[512];
+        if (!ctx->video_encoder)
+            snprintf(message, sizeof(message), "failed to create OBS video encoder %s; check encoder support, GPU driver, and runtime dependencies", encoder_id);
+        else if (!ctx->audio_encoder)
+            snprintf(message, sizeof(message), "failed to create OBS AAC audio encoder");
+        else
+            snprintf(message, sizeof(message), "failed to create OBS ffmpeg_muxer output");
+        set_error(error, error_size, message);
         release_recording(ctx);
         return false;
     }
@@ -476,7 +545,7 @@ static bool start_with_encoder(struct luma_obs *ctx, const char *path, const cha
 }
 
 bool luma_obs_start(struct luma_obs *ctx, const char *path, const char *requested,
-                    const char *mode, const char *target,
+                    const char *mode, const char *target, const char *quality,
                     uint32_t display_width, uint32_t display_height,
                     int32_t region_x, int32_t region_y,
                     uint32_t region_width, uint32_t region_height,
@@ -502,13 +571,8 @@ bool luma_obs_start(struct luma_obs *ctx, const char *path, const char *requeste
         video.base_height = base_height & ~1U;
         video.output_width = video.base_width;
         video.output_height = video.base_height;
-        if (strcmp(mode, "display") == 0 && (video.output_width > 1920 || video.output_height > 1080)) {
-            double scale_x = 1920.0 / (double)video.output_width;
-            double scale_y = 1080.0 / (double)video.output_height;
-            double scale = scale_x < scale_y ? scale_x : scale_y;
-            video.output_width = ((uint32_t)(video.output_width * scale)) & ~1U;
-            video.output_height = ((uint32_t)(video.output_height * scale)) & ~1U;
-        }
+        if (strcmp(mode, "display") == 0 || strcmp(mode, "region") == 0)
+            quality_limit(quality, &video.output_width, &video.output_height);
         video.output_format = VIDEO_FORMAT_NV12;
         video.gpu_conversion = true;
         video.colorspace = VIDEO_CS_709;
