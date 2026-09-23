@@ -313,6 +313,17 @@ struct Targets {
     windows: Vec<CaptureTarget>,
     games: Vec<CaptureTarget>,
 }
+
+fn resolve_display<'a>(displays: &'a [DisplayTarget], id: &str) -> Option<&'a DisplayTarget> {
+    if id == "primary" {
+        displays.iter().find(|item| item.primary)
+    } else {
+        displays
+            .iter()
+            .find(|item| item.id == id || item.obs_id == id)
+    }
+}
+
 async fn targets(State(state): State<AppState>) -> Response {
     let controller = state.lock().expect("controller mutex poisoned");
     let Some(recorder) = controller.recorder.as_ref() else {
@@ -360,11 +371,7 @@ async fn pick_region(State(state): State<AppState>, body: axum::body::Bytes) -> 
             .as_deref()
             .unwrap_or(&controller.settings.current().display_id);
         let displays = recorder.displays();
-        if configured == "primary" {
-            displays.into_iter().find(|item| item.primary)
-        } else {
-            displays.into_iter().find(|item| item.id == configured)
-        }
+        resolve_display(&displays, configured).cloned()
     };
     let Some(display) = display else {
         return error_response(
@@ -585,10 +592,8 @@ fn start_locked(
         .map_or_else(Vec::new, ObsRecorder::displays);
     let display = if matches!(mode, "window" | "game" | "audio_only") {
         None
-    } else if display_id == "primary" {
-        displays.iter().find(|item| item.primary)
     } else {
-        displays.iter().find(|item| item.id == display_id)
+        resolve_display(&displays, &display_id)
     };
     if !matches!(mode, "window" | "game" | "audio_only") && display.is_none() {
         return Err((
@@ -900,7 +905,10 @@ async fn get_settings(State(state): State<AppState>) -> Response {
         .clone();
     success_response(data)
 }
-async fn put_settings(State(state): State<AppState>, Json(settings): Json<Settings>) -> Response {
+async fn put_settings(
+    State(state): State<AppState>,
+    Json(mut settings): Json<Settings>,
+) -> Response {
     let mut controller = state.lock().expect("controller mutex poisoned");
     if controller.session.state == "recording" {
         return error_response(
@@ -925,6 +933,18 @@ async fn put_settings(State(state): State<AppState>, Json(settings): Json<Settin
             StatusCode::UNPROCESSABLE_ENTITY,
             format!("encoder {} is not available: {reason}", settings.encoder),
         );
+    }
+    if matches!(settings.capture_mode.as_str(), "display" | "region") {
+        if let Some(recorder) = controller.recorder.as_ref() {
+            let displays = recorder.displays();
+            let Some(display) = resolve_display(&displays, &settings.display_id) else {
+                return error_response(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "display_id is not in the current target list",
+                );
+            };
+            settings.display_id = display.id.clone();
+        }
     }
     if settings.capture_mode == "window" {
         let valid = settings.window_id.as_deref().is_some_and(|id| {
@@ -1106,5 +1126,34 @@ mod tests {
         assert_eq!(session.elapsed_seconds, 1219.3);
         assert_eq!(session.media_elapsed_seconds, 1219.3);
         assert_eq!(session.wall_elapsed_seconds, 1206.0);
+    }
+
+    #[test]
+    fn display_resolution_accepts_short_primary_and_legacy_obs_ids() {
+        let displays = vec![DisplayTarget {
+            id: "display-0".into(),
+            obs_id: r"\\?\DISPLAY#DEL4241#5&abc".into(),
+            name: "Dell".into(),
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+            primary: true,
+            available: true,
+        }];
+        assert_eq!(
+            resolve_display(&displays, "primary").unwrap().id,
+            "display-0"
+        );
+        assert_eq!(
+            resolve_display(&displays, "display-0").unwrap().obs_id,
+            r"\\?\DISPLAY#DEL4241#5&abc"
+        );
+        assert_eq!(
+            resolve_display(&displays, r"\\?\DISPLAY#DEL4241#5&abc")
+                .unwrap()
+                .id,
+            "display-0"
+        );
     }
 }

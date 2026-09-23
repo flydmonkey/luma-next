@@ -128,6 +128,7 @@ pub struct AudioDeviceInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct DisplayTarget {
     pub id: String,
+    pub obs_id: String,
     pub name: String,
     pub x: i32,
     pub y: i32,
@@ -306,25 +307,7 @@ impl ObsRecorder {
             luma_obs_list_displays(self.context.as_ptr(), buffer.as_mut_ptr(), buffer.len())
         };
         let bytes = unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), written) };
-        String::from_utf8_lossy(bytes)
-            .lines()
-            .filter_map(|line| {
-                let fields: Vec<_> = line.split('\t').collect();
-                if fields.len() != 7 {
-                    return None;
-                }
-                Some(DisplayTarget {
-                    id: fields[0].to_string(),
-                    name: fields[1].to_string(),
-                    x: fields[2].parse().ok()?,
-                    y: fields[3].parse().ok()?,
-                    width: fields[4].parse().ok()?,
-                    height: fields[5].parse().ok()?,
-                    primary: fields[6] == "1",
-                    available: true,
-                })
-            })
-            .collect()
+        parse_displays(&String::from_utf8_lossy(bytes))
     }
 
     pub fn audio_devices(&self) -> Vec<AudioDeviceInfo> {
@@ -395,7 +378,9 @@ impl ObsRecorder {
         } else if capture.mode == "game" {
             capture.game_id.unwrap_or_default()
         } else {
-            capture.display.map_or("", |display| display.id.as_str())
+            capture
+                .display
+                .map_or("", |display| display.obs_id.as_str())
         };
         let c_target = CString::new(target).map_err(|_| "invalid window id".to_string())?;
         let c_quality = CString::new(capture.quality).map_err(|_| "invalid quality".to_string())?;
@@ -509,6 +494,30 @@ impl ObsRecorder {
             )
         }
     }
+}
+
+fn parse_displays(value: &str) -> Vec<DisplayTarget> {
+    value
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let fields: Vec<_> = line.split('\t').collect();
+            if fields.len() != 7 {
+                return None;
+            }
+            Some(DisplayTarget {
+                id: format!("display-{index}"),
+                obs_id: fields[0].to_string(),
+                name: fields[1].to_string(),
+                x: fields[2].parse().ok()?,
+                y: fields[3].parse().ok()?,
+                width: fields[4].parse().ok()?,
+                height: fields[5].parse().ok()?,
+                primary: fields[6] == "1",
+                available: true,
+            })
+        })
+        .collect()
 }
 
 fn resolve_obs_runtime() -> Result<PathBuf, String> {
@@ -695,5 +704,19 @@ mod tests {
         std::fs::create_dir_all(directory.path().join("data/libobs")).unwrap();
         std::fs::create_dir_all(directory.path().join("obs-plugins/64bit")).unwrap();
         assert!(is_obs_runtime(directory.path()));
+    }
+
+    #[test]
+    fn display_paths_with_url_metacharacters_get_stable_ui_ids() {
+        let displays = parse_displays(
+            "\\\\?\\DISPLAY#DEL4241#5&b18619&0&UID264#{guid}\tDell P2722H\t0\t0\t1920\t1080\t1\n",
+        );
+        assert_eq!(displays.len(), 1);
+        assert_eq!(displays[0].id, "display-0");
+        assert_eq!(
+            displays[0].obs_id,
+            "\\\\?\\DISPLAY#DEL4241#5&b18619&0&UID264#{guid}"
+        );
+        assert!(displays[0].primary);
     }
 }
