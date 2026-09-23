@@ -67,4 +67,5 @@ powershell -ExecutionPolicy Bypass -File .\scripts\github-release.ps1 `
 2. 发布说明中的 Signed/Unsigned 与 `Get-AuthenticodeSignature` 一致；
 3. GPL/OBS/FFmpeg 许可证和源码位置仍在包中；
 4. ZIP 解压后可直接双击 `Install.cmd`，安装目录内也保留可双击的 `Uninstall.cmd`；
-5. 在 GitHub 网页检查 Draft 的正文、附件和人工清单，再手工点击 Publish。
+5. `manifest.json.encoder_runtime` 与 pack 输出一致，三家硬编缺失项均有 WARN 或目标机验收证据；
+6. 在 GitHub 网页检查 Draft 的正文、附件和人工清单，再手工点击 Publish。

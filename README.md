@@ -17,6 +17,7 @@ WebUI (default browser)  --HTTP-->  luma-engine (Rust + system tray)
 - 单进程引擎同时拥有 HTTP、libobs 与 Windows 系统托盘；浏览器只是控制客户端
 - 平台：Windows 优先验收；结构预留跨平台
 - 许可：因链接 libobs，本项目按 **GPL** 约束分发（详见下文）
+- Windows 硬编插件/驱动依赖与诚实探测见 [docs/ENCODERS.md](docs/ENCODERS.md)
 
 ## 许可（必读）
 
