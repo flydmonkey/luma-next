@@ -40,7 +40,7 @@ function Invoke-LumaApi([string]$Path, [string]$Method = 'GET', [object]$Body = 
 function Wait-LumaStop([object]$Initial) {
     $session = $Initial
     $maxLatencyMs = 0.0
-    foreach ($attempt in 1..150) {
+    foreach ($attempt in 1..650) {
         if ($session.state -ne 'stopping') { break }
         Start-Sleep -Milliseconds 200
         $started = Get-Date
@@ -48,7 +48,7 @@ function Wait-LumaStop([object]$Initial) {
         $latency = ((Get-Date) - $started).TotalMilliseconds
         $maxLatencyMs = [Math]::Max($maxLatencyMs, $latency)
     }
-    if ($session.state -eq 'stopping') { throw 'Stop did not reach a terminal state within 30 seconds.' }
+    if ($session.state -eq 'stopping') { throw 'Stop did not reach a terminal state within 130 seconds.' }
     if ($session.state -eq 'failed') { throw "Stop failed: $($session.error)" }
     if ($session.state -ne 'idle') { throw "Unexpected state after stop: $($session.state)" }
     Write-Host ("[stop-control] session remained responsive; max poll latency {0:N0}ms" -f $maxLatencyMs)

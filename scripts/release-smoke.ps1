@@ -22,7 +22,7 @@ try {
     if(-not $start.ok){throw $start.error};Start-Sleep -Seconds $Seconds
     $stop=Invoke-RestMethod "$base/api/v1/session/stop" -Method Post
     if(-not $stop.ok){throw $stop.error}
-    foreach($attempt in 1..150){
+    foreach($attempt in 1..650){
         if($stop.data.state -ne 'stopping'){break}
         Start-Sleep -Milliseconds 200
         $stop=Invoke-RestMethod "$base/api/v1/session" -TimeoutSec 2

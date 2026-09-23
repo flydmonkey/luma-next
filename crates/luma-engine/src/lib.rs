@@ -113,6 +113,12 @@ fn apply_elapsed(session: &mut Session, media: f64, wall: f64) {
     session.wall_elapsed_seconds = wall;
 }
 
+fn completed_stop_warning(validation: &RecordingValidation) -> Option<String> {
+    validation
+        .stop_forced
+        .then(|| "OBS 正常停止超时，已强制结束；成片已通过 ffprobe 校验".into())
+}
+
 struct Controller {
     recorder: Option<ObsRecorder>,
     session: Session,
@@ -808,6 +814,13 @@ fn begin_stop(state: &AppState) -> Result<Session, (StatusCode, String)> {
         controller.recorder = Some(recorder);
         match result {
             Ok((path, validation)) => {
+                eprintln!(
+                    "recording stop worker: validated {} ({:.3}s, {} bytes, forced={})",
+                    path.display(),
+                    validation.duration_seconds,
+                    validation.bytes,
+                    validation.stop_forced
+                );
                 controller.session.state = "idle";
                 controller.session.elapsed_seconds = validation.duration_seconds;
                 controller.session.media_elapsed_seconds = validation.media_seconds;
@@ -815,7 +828,13 @@ fn begin_stop(state: &AppState) -> Result<Session, (StatusCode, String)> {
                 controller.session.output_path = Some(path.to_string_lossy().into_owned());
                 controller.session.validation = Some(validation);
                 controller.session.error = None;
-                controller.session.warning = None;
+                controller.session.warning = completed_stop_warning(
+                    controller
+                        .session
+                        .validation
+                        .as_ref()
+                        .expect("validation was just stored"),
+                );
             }
             Err(error) => {
                 controller.session.state = "failed";
@@ -827,16 +846,16 @@ fn begin_stop(state: &AppState) -> Result<Session, (StatusCode, String)> {
 
     let watchdog_state = state.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_secs(30));
+        std::thread::sleep(std::time::Duration::from_secs(120));
         let mut controller = watchdog_state.lock().expect("controller mutex poisoned");
         if controller.stop_generation == generation && controller.session.state == "stopping" {
             controller.session.state = "failed";
             controller.session.error = Some(
-                "录制停止超过 30 秒；控制面仍可用，但 OBS/驱动停止线程未返回，请重启 Luma 后再录制"
+                "录制停止超过 120 秒；控制面仍可用，但 OBS/驱动停止线程未返回，请重启 Luma 后再录制"
                     .into(),
             );
             controller.session.warning = None;
-            eprintln!("recording stop watchdog: marked session failed after 30s");
+            eprintln!("recording stop watchdog: marked session failed after 120s");
         }
     });
 
@@ -1215,6 +1234,25 @@ mod tests {
         assert_eq!(snapshot.state, "stopping");
         assert_eq!(snapshot.elapsed_seconds, 30.5);
         assert_eq!(snapshot.wall_elapsed_seconds, 30.7);
+    }
+
+    #[test]
+    fn force_stopped_but_validated_recording_is_a_success_with_warning() {
+        let validation = RecordingValidation {
+            video_stream: true,
+            audio_stream: true,
+            video_width: Some(1920),
+            video_height: Some(1080),
+            duration_seconds: 1178.0,
+            wall_seconds: 1178.0,
+            media_seconds: 1178.0,
+            media_ffprobe_delta_seconds: 0.0,
+            wall_media_delta_seconds: 0.0,
+            encoded_frames: 35_342,
+            bytes: 847_000_000,
+            stop_forced: true,
+        };
+        assert!(completed_stop_warning(&validation).is_some());
     }
 
     #[test]

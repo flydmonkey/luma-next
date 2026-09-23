@@ -701,8 +701,32 @@ bool luma_obs_pause(struct luma_obs *ctx, bool pause, char *error, size_t error_
 struct stop_watchdog {
     obs_output_t *output;
     volatile LONG stop_returned;
+    volatile LONG force_requested;
     volatile LONG refs;
 };
+
+struct output_stop_signal {
+    HANDLE event;
+    volatile LONG code;
+};
+
+static void output_stopped(void *data, calldata_t *params)
+{
+    struct output_stop_signal *signal = data;
+    InterlockedExchange(&signal->code, (LONG)calldata_int(params, "code"));
+    SetEvent(signal->event);
+}
+
+static bool wait_for_output_stop(obs_output_t *output, HANDLE event, DWORD timeout_ms)
+{
+    ULONGLONG started = GetTickCount64();
+    while (GetTickCount64() - started < timeout_ms) {
+        if (!obs_output_active(output)) return true;
+        if (event && WaitForSingleObject(event, 100) == WAIT_OBJECT_0) return true;
+        if (!event) Sleep(100);
+    }
+    return !obs_output_active(output) || (event && WaitForSingleObject(event, 0) == WAIT_OBJECT_0);
+}
 
 static void release_stop_watchdog(struct stop_watchdog *watchdog)
 {
@@ -723,6 +747,7 @@ static DWORD WINAPI force_stop_watchdog(LPVOID data)
         Sleep(100);
     }
     blog(LOG_WARNING, "Luma stop watchdog: obs_output_stop blocked for 15s; requesting force stop");
+    InterlockedExchange(&watchdog->force_requested, 1);
     obs_output_force_stop(watchdog->output);
     blog(LOG_INFO, "Luma stop watchdog: force stop call returned");
     release_stop_watchdog(watchdog);
@@ -731,14 +756,23 @@ static DWORD WINAPI force_stop_watchdog(LPVOID data)
 
 bool luma_obs_stop(struct luma_obs *ctx, uint32_t *encoded_frames, uint64_t *total_bytes,
                    double *media_seconds, double *wall_seconds,
+                   bool *stop_forced,
                    char *error, size_t error_size)
 {
     if (!ctx || !ctx->output) {
         set_error(error, error_size, "no recording is active");
         return false;
     }
+    if (stop_forced) *stop_forced = false;
     double stopped_wall_seconds = luma_obs_wall_seconds(ctx);
     ULONGLONG stop_started_ms = GetTickCount64();
+    struct output_stop_signal stop_signal = {0};
+    stop_signal.event = CreateEventW(NULL, TRUE, FALSE, NULL);
+    signal_handler_t *signal_handler = obs_output_get_signal_handler(ctx->output);
+    if (stop_signal.event && signal_handler)
+        signal_handler_connect(signal_handler, "stop", output_stopped, &stop_signal);
+    else
+        blog(LOG_WARNING, "Luma stop: stop signal event unavailable; falling back to active polling");
     struct stop_watchdog *watchdog = calloc(1, sizeof(*watchdog));
     if (watchdog) {
         watchdog->output = obs_output_get_ref(ctx->output);
@@ -755,21 +789,34 @@ bool luma_obs_stop(struct luma_obs *ctx, uint32_t *encoded_frames, uint64_t *tot
     obs_output_stop(ctx->output);
     blog(LOG_INFO, "Luma stop: obs_output_stop returned after %llu ms", GetTickCount64() - stop_started_ms);
     if (watchdog) {
+        if (InterlockedCompareExchange(&watchdog->force_requested, 0, 0) != 0 && stop_forced)
+            *stop_forced = true;
         InterlockedExchange(&watchdog->stop_returned, 1);
         release_stop_watchdog(watchdog);
     }
-    for (int i = 0; i < 150 && obs_output_active(ctx->output); ++i) {
-        Sleep(100);
-    }
-    if (obs_output_active(ctx->output)) {
-        blog(LOG_WARNING, "Luma stop: output remained active for 15s after stop returned; forcing stop");
+    bool stopped = wait_for_output_stop(ctx->output, stop_signal.event, 45000);
+    if (!stopped) {
+        blog(LOG_WARNING, "Luma stop: no stop signal and output remained active for 45s; forcing stop");
+        if (stop_forced) *stop_forced = true;
         obs_output_force_stop(ctx->output);
-        set_error(error, error_size, "OBS output did not stop within 15 seconds");
+        ULONGLONG force_started_ms = GetTickCount64();
+        stopped = wait_for_output_stop(ctx->output, stop_signal.event, 15000);
+        blog(stopped ? LOG_INFO : LOG_WARNING,
+             "Luma stop: force-stop wait finished after %llu ms (stopped=%s)",
+             GetTickCount64() - force_started_ms, stopped ? "true" : "false");
+    }
+    if (signal_handler && stop_signal.event)
+        signal_handler_disconnect(signal_handler, "stop", output_stopped, &stop_signal);
+    if (stop_signal.event) CloseHandle(stop_signal.event);
+    if (!stopped) {
+        set_error(error, error_size, "OBS output remained active after 45s graceful stop and 15s force-stop wait");
         release_recording(ctx);
         release_dynamic_sources(ctx);
         return false;
     }
-    blog(LOG_INFO, "Luma stop: output inactive after %llu ms", GetTickCount64() - stop_started_ms);
+    blog(LOG_INFO, "Luma stop: completion observed after %llu ms (signal_code=%ld, forced=%s)",
+         GetTickCount64() - stop_started_ms, stop_signal.code,
+         stop_forced && *stop_forced ? "true" : "false");
     Sleep(500);
     if (encoded_frames) *encoded_frames = ctx->video_encoder ? obs_encoder_get_encoded_frames(ctx->video_encoder) : 0;
     if (total_bytes) *total_bytes = obs_output_get_total_bytes(ctx->output);
@@ -777,10 +824,14 @@ bool luma_obs_stop(struct luma_obs *ctx, uint32_t *encoded_frames, uint64_t *tot
     if (wall_seconds) *wall_seconds = stopped_wall_seconds;
     const char *last_error = obs_output_get_last_error(ctx->output);
     if (last_error && *last_error) {
-        set_error(error, error_size, last_error);
-        release_recording(ctx);
-        release_dynamic_sources(ctx);
-        return false;
+        if (stop_forced && *stop_forced) {
+            blog(LOG_WARNING, "Luma stop: forced output reported '%s'; deferring final success to ffprobe validation", last_error);
+        } else {
+            set_error(error, error_size, last_error);
+            release_recording(ctx);
+            release_dynamic_sources(ctx);
+            return false;
+        }
     }
     release_recording(ctx);
     release_dynamic_sources(ctx);

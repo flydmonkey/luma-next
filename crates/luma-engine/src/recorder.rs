@@ -74,6 +74,7 @@ unsafe extern "C" {
         total_bytes: *mut u64,
         media_seconds: *mut f64,
         wall_seconds: *mut f64,
+        stop_forced: *mut bool,
         error: *mut c_char,
         error_size: usize,
     ) -> bool;
@@ -95,6 +96,7 @@ pub struct RecordingValidation {
     pub wall_media_delta_seconds: f64,
     pub encoded_frames: u32,
     pub bytes: u64,
+    pub stop_forced: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -457,6 +459,7 @@ impl ObsRecorder {
         let mut reported_bytes = 0;
         let mut media_seconds = 0.0;
         let mut wall_seconds = 0.0;
+        let mut stop_forced = false;
         let mut error = error_buffer();
         let stopped = unsafe {
             luma_obs_stop(
@@ -465,6 +468,7 @@ impl ObsRecorder {
                 &mut reported_bytes,
                 &mut media_seconds,
                 &mut wall_seconds,
+                &mut stop_forced,
                 error.as_mut_ptr(),
                 error.len(),
             )
@@ -479,6 +483,7 @@ impl ObsRecorder {
             encoded_frames,
             reported_bytes,
             active.audio_only,
+            stop_forced,
         )?;
         Ok((active.path, validation))
     }
@@ -587,6 +592,7 @@ fn validate_recording(
     encoded_frames: u32,
     reported_bytes: u64,
     audio_only: bool,
+    stop_forced: bool,
 ) -> Result<RecordingValidation, String> {
     let bytes = std::fs::metadata(path)
         .map_err(|error| {
@@ -701,6 +707,7 @@ fn validate_recording(
         wall_media_delta_seconds,
         encoded_frames,
         bytes,
+        stop_forced,
     })
 }
 
