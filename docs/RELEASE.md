@@ -1,6 +1,9 @@
 # Luma Next 发布 Runbook
 
 发布操作在 Windows x64 的交互式用户会话中完成。脚本只准备本地产物，默认不创建或上传 GitHub Release。
+逐项操作、预期结果与失败判据见 [RELEASE_SMOKE.md](RELEASE_SMOKE.md)。首个正式版本采用
+Cargo 当前版本 `0.1.0`，tag 为 `v0.1.0`；后续发布统一使用 SemVer，并要求先提交发布候选、
+再创建 annotated tag，最后以该 tag 对应版本上传产物。
 
 ## 1. 自动矩阵
 
@@ -69,3 +72,16 @@ powershell -ExecutionPolicy Bypass -File .\scripts\github-release.ps1 `
 4. ZIP 解压后可直接双击 `Install.cmd`，安装目录内也保留可双击的 `Uninstall.cmd`；
 5. `manifest.json.encoder_runtime` 与 pack 输出一致，三家硬编缺失项均有 WARN 或目标机验收证据；
 6. 在 GitHub 网页检查 Draft 的正文、附件和人工清单，再手工点击 Publish。
+
+正式发布顺序：
+
+```powershell
+git tag -a v0.1.0 -m "Luma Next 0.1.0"
+git push origin main
+git push origin v0.1.0
+powershell -ExecutionPolicy Bypass -File .\scripts\publish.ps1 -Version 0.1.0 -SkipFfplay -Sign
+powershell -ExecutionPolicy Bypass -File .\scripts\github-release.ps1 -Version 0.1.0 -Tag v0.1.0 -SkipBuild -Draft:`$false
+```
+
+没有签名证书时仍可发布，但 `RELEASE-NOTES.md` 和 GitHub Release 必须明确标为 `Unsigned`。
+已发布的 tag/Release 禁止覆盖；修复后递增 SemVer 重新发布。

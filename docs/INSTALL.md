@@ -125,4 +125,5 @@ Luma Next、OBS 与 FFmpeg 对应源码位置。M8 提供可选 Authenticode 挂
 5. 发布前另在真实游戏、麦克风和目标 DPI/多屏环境手测。
 6. 检查 pack 的三家硬编 WARN、`manifest.json.encoder_runtime`，并至少在目标 Intel/AMD/NVIDIA 机器执行对应的 `-RequireHw` 回归；无对应 GPU 时核对非空 `unavailable_reason`。
 
-完整顺序与报告格式见 [RELEASE.md](RELEASE.md)，证书配置及故障排查见 [SIGNING.md](SIGNING.md)。
+完整顺序与报告格式见 [RELEASE.md](RELEASE.md)，逐项验收见
+[RELEASE_SMOKE.md](RELEASE_SMOKE.md)，证书配置及故障排查见 [SIGNING.md](SIGNING.md)。
