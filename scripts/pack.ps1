@@ -14,6 +14,7 @@ $obsBin = Join-Path $ObsRundir 'bin\64bit'
 $obsPlugins = Join-Path $ObsRundir 'obs-plugins\64bit'
 $obsData = Join-Path $ObsRundir 'data'
 $obsLicense = Join-Path (Split-Path (Split-Path (Split-Path $ObsRundir))) 'COPYING'
+$obsSource = Split-Path (Split-Path (Split-Path $ObsRundir))
 $ffmpegVersion = '9.0.2'
 $ffmpegArchiveName = "ffmpeg-$ffmpegVersion-essentials_build.zip"
 $ffmpegUrl = "https://www.gyan.dev/ffmpeg/builds/packages/$ffmpegArchiveName"
@@ -63,6 +64,21 @@ $pluginDestination = New-Item -ItemType Directory -Force -Path (Join-Path $obsDe
 
 Copy-Item -LiteralPath $engine -Destination $binDestination.FullName
 Get-ChildItem -LiteralPath $obsBin -File | Where-Object Extension -In @('.dll', '.exe') | Copy-Item -Destination $binDestination.FullName
+$qsvRuntimeDlls = @()
+$depsRoot = Join-Path $obsSource '.deps'
+if (Test-Path -LiteralPath $depsRoot) {
+    $qsvRuntimeDlls = @(Get-ChildItem -LiteralPath $depsRoot -Recurse -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Extension -eq '.dll' -and $_.Name -match '(?i)(^|lib)(vpl|mfx)' } |
+        Sort-Object Name -Unique)
+    foreach ($runtimeDll in $qsvRuntimeDlls) {
+        Copy-Item -LiteralPath $runtimeDll.FullName -Destination $binDestination.FullName -Force
+    }
+}
+if ($qsvRuntimeDlls.Count) {
+    Write-Host "Bundled Intel QSV runtime DLLs: $($qsvRuntimeDlls.Name -join ', ')"
+} else {
+    Write-Host 'Intel QSV runtime: no redistributable VPL/MFX DLL exists in this OBS deps tree (the OBS build uses its linked dispatcher and the installed Intel media driver).'
+}
 Get-ChildItem -LiteralPath $obsPlugins -File | Where-Object Extension -eq '.dll' | Copy-Item -Destination $pluginDestination.FullName
 Copy-Item -LiteralPath $obsData -Destination $obsDestination.FullName -Recurse
 Copy-Item -LiteralPath $obsLicense -Destination (Join-Path $packageRoot 'LICENSE-OBS-GPL.txt')

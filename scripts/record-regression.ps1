@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [ValidateRange(20, 300)][int]$Seconds = 20,
-    [ValidateSet('auto', 'x264', 'amf')][string]$Encoder = 'auto',
+    [ValidateSet('auto', 'x264', 'amf', 'qsv')][string]$Encoder = 'auto',
+    [ValidateSet('1080p30', '1440p30', '2160p30')][string]$Quality = '1080p30',
     [switch]$RequireHw,
     [switch]$SkipMicrophone,
     [switch]$SkipM6,
@@ -40,7 +41,7 @@ function Invoke-RecordingCase([string]$EncoderId, [string]$Label, [bool]$Hardwar
     Write-Host "[$Label] Starting a $Seconds-second recording with $EncoderId."
     $startedAt = Get-Date
     $script:recording = $true
-    $start = Invoke-LumaApi '/api/v1/session/start' 'POST' @{ mode=$Mode; display_id=$DisplayId; region=$Region; window_id=$(if($WindowId){$WindowId}else{$null}); game_id=$(if($GameId){$GameId}else{$null}); system_audio=$SystemAudio; microphone=$Microphone; mic_device_id='default'; quality='1080p30'; encoder=$EncoderId }
+    $start = Invoke-LumaApi '/api/v1/session/start' 'POST' @{ mode=$Mode; display_id=$DisplayId; region=$Region; window_id=$(if($WindowId){$WindowId}else{$null}); game_id=$(if($GameId){$GameId}else{$null}); system_audio=$SystemAudio; microphone=$Microphone; mic_device_id='default'; quality=$Quality; encoder=$EncoderId }
     Write-Host "[$Label] requested=$($start.encoder_requested) active=$($start.encoder_active) fallback=$($start.encoder_fallback)"
     if ($start.encoder_fallback) {
         Write-Warning "[$Label] fallback reason: $($start.fallback_reason)"
@@ -103,8 +104,8 @@ try {
     $encoders=(Invoke-LumaApi '/api/v1/encoders').encoders
     $hardware=@($encoders | Where-Object {$_.available -and $_.hardware}) | Sort-Object @{Expression={if($_.id -eq 'h264_texture_amf'){0}else{1}}}
     if($Encoder -in @('auto','x264')){Invoke-RecordingCase 'obs_x264' 'x264' $false}
-    if($Encoder -in @('auto','amf')){
-        $selected=if($Encoder -eq 'amf'){$hardware|Where-Object id -eq 'h264_texture_amf'|Select-Object -First 1}else{$hardware|Select-Object -First 1}
+    if($Encoder -in @('auto','amf','qsv')){
+        $selected=if($Encoder -eq 'amf'){$hardware|Where-Object id -eq 'h264_texture_amf'|Select-Object -First 1}elseif($Encoder -eq 'qsv'){$hardware|Where-Object id -eq 'obs_qsv11_v2'|Select-Object -First 1}else{$hardware|Select-Object -First 1}
         if($null -eq $selected){$reason='No available H.264 hardware encoder was reported by libobs.';if($RequireHw){throw $reason};Write-Host "[hardware] SKIP: $reason" -ForegroundColor Yellow}else{Invoke-RecordingCase $selected.id 'hardware' $true}
     }
     if(-not $SkipMicrophone){

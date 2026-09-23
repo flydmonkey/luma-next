@@ -45,7 +45,7 @@
       <div class="quick-settings">
         <div><span>系统声</span><strong id="system-audio-label">开启</strong><button id="system-audio-toggle" class="switch on" aria-label="切换系统声"><i></i></button></div>
         <div><span>麦克风</span><strong id="microphone-label">关闭</strong><button id="microphone-toggle" class="switch" aria-label="切换麦克风"><i></i></button></div>
-        <div><span>清晰度 / 编码器</span><strong>1080p · 30 fps</strong><span id="home-encoder" class="pill">x264</span></div>
+        <div><span>清晰度 / 编码器</span><strong id="home-quality">1080p · 30 fps</strong><span id="home-encoder" class="pill">x264</span></div>
       </div>
       <div class="record-actions"><button id="record-button" class="record-button"><span></span><label>开始录制</label></button><button id="pause-button" class="secondary pause-button" hidden>暂停</button></div>
       <p class="capability">当前能力：显示器、区域、窗口或可成功 hook 的游戏 + 系统音频/麦克风，30 fps</p>
@@ -70,7 +70,7 @@
         <div class="setting-card"><div><strong>系统声</strong><p>录制 Windows 默认输出设备</p></div><button id="settings-system-audio" type="button" class="switch on"><i></i></button></div>
         <div class="setting-card"><div><strong>麦克风</strong><p>需要 Windows 麦克风隐私权限</p></div><button id="settings-microphone" type="button" class="switch"><i></i></button></div>
         <div class="setting-card"><div><strong>麦克风设备</strong><p>来自 OBS/WASAPI 的当前输入设备</p></div><select id="mic-device"></select></div>
-        <div class="setting-card"><div><strong>清晰度</strong><p>当前稳定编码配置</p></div><select id="quality"><option value="1080p30">1080p · 30 fps · x264</option></select></div>
+        <div class="setting-card"><div><strong>清晰度</strong><p>不超过来源物理像素，保持比例缩放</p></div><select id="quality"><option value="1080p30">1080p · 30 fps</option><option value="1440p30">1440p · 30 fps</option><option value="2160p30">4K · 30 fps</option></select></div>
         <h2>编码器</h2>
         <div class="setting-card"><div><strong>录像编码器</strong><p id="encoder-help">只显示 libobs 实际探测到的 H.264 编码器</p></div><select id="encoder" required><option value="obs_x264">Software (x264)</option></select></div>
         <div id="unavailable-encoders" class="setting-card disabled"><div><strong>本机不可用</strong><p>正在探测硬件编码器…</p></div><span class="pill">只读</span></div>
