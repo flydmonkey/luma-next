@@ -528,16 +528,19 @@ fn start_locked(
     let display_id = request.display_id.unwrap_or(configured.display_id);
     let region = request.region.or(configured.region);
     let mic_device_id = request.mic_device_id.unwrap_or(configured.mic_device_id);
-    let available = controller.recorder.as_ref().is_some_and(|recorder| {
+    let requested_info = controller.recorder.as_ref().and_then(|recorder| {
         recorder
             .encoders()
-            .iter()
-            .any(|item| item.available && item.id == requested_encoder)
+            .into_iter()
+            .find(|item| item.id == requested_encoder)
     });
-    if !available {
+    if !requested_info.as_ref().is_some_and(|item| item.available) {
+        let reason = requested_info
+            .and_then(|item| item.unavailable_reason)
+            .unwrap_or_else(|| "encoder id is unknown to this Luma/OBS build".into());
         return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
-            format!("encoder {requested_encoder} is not available"),
+            format!("encoder {requested_encoder} is not available: {reason}"),
         ));
     }
     if mode == "window" {
@@ -905,20 +908,22 @@ async fn put_settings(State(state): State<AppState>, Json(settings): Json<Settin
             "settings cannot change while recording",
         );
     }
-    let encoder_available =
-        controller
-            .recorder
-            .as_ref()
-            .map_or(settings.encoder == "obs_x264", |recorder| {
-                recorder
-                    .encoders()
-                    .iter()
-                    .any(|item| item.available && item.id == settings.encoder)
-            });
+    let encoder_info = controller.recorder.as_ref().and_then(|recorder| {
+        recorder
+            .encoders()
+            .into_iter()
+            .find(|item| item.id == settings.encoder)
+    });
+    let encoder_available = encoder_info
+        .as_ref()
+        .map_or(settings.encoder == "obs_x264", |item| item.available);
     if !encoder_available {
+        let reason = encoder_info
+            .and_then(|item| item.unavailable_reason)
+            .unwrap_or_else(|| "encoder id is unknown to this Luma/OBS build".into());
         return error_response(
             StatusCode::UNPROCESSABLE_ENTITY,
-            format!("encoder {} is not available", settings.encoder),
+            format!("encoder {} is not available: {reason}", settings.encoder),
         );
     }
     if settings.capture_mode == "window" {

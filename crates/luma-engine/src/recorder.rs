@@ -203,12 +203,27 @@ impl ObsRecorder {
                 error.len(),
             )
         };
-        NonNull::new(context)
+        let recorder = NonNull::new(context)
             .map(|context| Self {
                 context,
                 active: None,
             })
-            .ok_or_else(|| read_error(&error))
+            .ok_or_else(|| read_error(&error))?;
+        for encoder in recorder.encoders().into_iter().filter(|item| item.hardware) {
+            if encoder.available {
+                eprintln!("Hardware encoder {} available", encoder.id);
+            } else {
+                eprintln!(
+                    "Hardware encoder {} unavailable: {}",
+                    encoder.id,
+                    encoder
+                        .unavailable_reason
+                        .as_deref()
+                        .unwrap_or("unknown reason")
+                );
+            }
+        }
+        Ok(recorder)
     }
 
     pub fn encoders(&self) -> Vec<EncoderInfo> {

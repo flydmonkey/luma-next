@@ -23,6 +23,7 @@ struct luma_obs {
     ULONGLONG pause_started_ms;
     ULONGLONG paused_total_ms;
     char qsv_module_error[512];
+    char nvenc_module_error[512];
 };
 
 struct display_list {
@@ -263,7 +264,8 @@ struct luma_obs *luma_obs_initialize(const char *root, const char *config_path, 
     }
     if (!load_module(root, "obs-qsv11", ctx->qsv_module_error, sizeof(ctx->qsv_module_error)))
         blog(LOG_WARNING, "Luma optional module unavailable: %s", ctx->qsv_module_error);
-    load_optional_module(root, "obs-nvenc");
+    if (!load_module(root, "obs-nvenc", ctx->nvenc_module_error, sizeof(ctx->nvenc_module_error)))
+        blog(LOG_WARNING, "Luma optional module unavailable: %s", ctx->nvenc_module_error);
     obs_post_load_modules();
 
     obs_data_t *monitor_settings = obs_data_create();
@@ -460,6 +462,27 @@ size_t luma_obs_encoder_unavailable_reason(struct luma_obs *ctx, const char *wan
         snprintf(buffer, buffer_size, "%s", ctx->qsv_module_error);
     } else if (strncmp(wanted, "obs_qsv11", 9) == 0) {
         snprintf(buffer, buffer_size, "Intel QSV H.264 was not registered; verify an enabled Intel GPU and its media driver");
+    } else if (strcmp(wanted, "jim_nvenc") == 0 || strcmp(wanted, "ffmpeg_nvenc") == 0) {
+        HMODULE nvenc = LoadLibraryA(sizeof(void *) == 8 ? "nvEncodeAPI64.dll" : "nvEncodeAPI.dll");
+        if (!nvenc)
+            snprintf(buffer, buffer_size, "NVIDIA NVENC driver API %s is unavailable (Windows error %lu); install a supported NVIDIA driver and enable the adapter",
+                     sizeof(void *) == 8 ? "nvEncodeAPI64.dll" : "nvEncodeAPI.dll", GetLastError());
+        else {
+            FreeLibrary(nvenc);
+            if (ctx && ctx->nvenc_module_error[0])
+                snprintf(buffer, buffer_size, "NVIDIA driver API loaded, but %s", ctx->nvenc_module_error);
+            else
+                snprintf(buffer, buffer_size, "NVIDIA driver API loaded but OBS registered no compatible H.264 NVENC encoder; verify GPU generation and driver version");
+        }
+    } else if (strcmp(wanted, "h264_texture_amf") == 0) {
+        HMODULE amf = LoadLibraryA(sizeof(void *) == 8 ? "amfrt64.dll" : "amfrt32.dll");
+        if (!amf)
+            snprintf(buffer, buffer_size, "AMD AMF driver runtime %s is unavailable (Windows error %lu); install a supported AMD graphics driver and enable the adapter",
+                     sizeof(void *) == 8 ? "amfrt64.dll" : "amfrt32.dll", GetLastError());
+        else {
+            FreeLibrary(amf);
+            snprintf(buffer, buffer_size, "AMD AMF runtime loaded but OBS registered no compatible H.264 AMF encoder; verify GPU support and driver version");
+        }
     } else {
         snprintf(buffer, buffer_size, "OBS encoder %s was not registered for H.264 on this system", wanted);
     }
