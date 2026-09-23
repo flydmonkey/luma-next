@@ -15,6 +15,14 @@ $obsPlugins = Join-Path $ObsRundir 'obs-plugins\64bit'
 $obsData = Join-Path $ObsRundir 'data'
 $obsLicense = Join-Path (Split-Path (Split-Path (Split-Path $ObsRundir))) 'COPYING'
 $obsSource = Split-Path (Split-Path (Split-Path $ObsRundir))
+$encoderPluginInputs = @(
+    (Join-Path $obsPlugins 'obs-qsv11.dll'),
+    (Join-Path $obsPlugins 'obs-nvenc.dll'),
+    (Join-Path $obsPlugins 'obs-ffmpeg.dll'),
+    (Join-Path $obsBin 'obs-qsv-test.exe'),
+    (Join-Path $obsBin 'obs-nvenc-test.exe'),
+    (Join-Path $obsBin 'obs-amf-test.exe')
+)
 $ffmpegVersion = '9.0.2'
 $ffmpegArchiveName = "ffmpeg-$ffmpegVersion-essentials_build.zip"
 $ffmpegUrl = "https://www.gyan.dev/ffmpeg/builds/packages/$ffmpegArchiveName"
@@ -23,7 +31,7 @@ $ffmpegCache = Join-Path $repo 'third_party\ffmpeg\cache'
 $ffmpegArchive = Join-Path $ffmpegCache $ffmpegArchiveName
 $ffmpegExtracted = Join-Path $ffmpegCache "ffmpeg-$ffmpegVersion-essentials_build"
 
-foreach ($required in @($obsBin, $obsPlugins, $obsData, $obsLicense)) {
+foreach ($required in @($obsBin, $obsPlugins, $obsData, $obsLicense) + $encoderPluginInputs) {
     if (-not (Test-Path -LiteralPath $required)) { throw "Required OBS runtime input is missing: $required" }
 }
 
@@ -64,20 +72,34 @@ $pluginDestination = New-Item -ItemType Directory -Force -Path (Join-Path $obsDe
 
 Copy-Item -LiteralPath $engine -Destination $binDestination.FullName
 Get-ChildItem -LiteralPath $obsBin -File | Where-Object Extension -In @('.dll', '.exe') | Copy-Item -Destination $binDestination.FullName
-$qsvRuntimeDlls = @()
+$vendorRuntimePatterns = [ordered]@{
+    qsv = '(?i)^(lib)?(vpl|mfx).*\.dll$'
+    nvenc = '(?i)^(nvEncodeAPI(64)?|nvml)\.dll$'
+    amf = '(?i)^amfrt(32|64)\.dll$'
+}
+$vendorRuntimeDlls = [ordered]@{}
 $depsRoot = Join-Path $obsSource '.deps'
-if (Test-Path -LiteralPath $depsRoot) {
-    $qsvRuntimeDlls = @(Get-ChildItem -LiteralPath $depsRoot -Recurse -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.Extension -eq '.dll' -and $_.Name -match '(?i)(^|lib)(vpl|mfx)' } |
+$runtimeSearchRoots = @($obsBin)
+if (Test-Path -LiteralPath $depsRoot) { $runtimeSearchRoots += $depsRoot }
+foreach ($vendor in $vendorRuntimePatterns.Keys) {
+    $runtimeDlls = @($runtimeSearchRoots | ForEach-Object {
+            Get-ChildItem -LiteralPath $_ -Recurse -File -ErrorAction SilentlyContinue
+        } | Where-Object { $_.Name -match $vendorRuntimePatterns[$vendor] } |
         Sort-Object Name -Unique)
-    foreach ($runtimeDll in $qsvRuntimeDlls) {
+    [string[]]$runtimeNames = @($runtimeDlls | ForEach-Object Name)
+    $vendorRuntimeDlls[$vendor] = [object]$runtimeNames
+    foreach ($runtimeDll in $runtimeDlls) {
         Copy-Item -LiteralPath $runtimeDll.FullName -Destination $binDestination.FullName -Force
     }
-}
-if ($qsvRuntimeDlls.Count) {
-    Write-Host "Bundled Intel QSV runtime DLLs: $($qsvRuntimeDlls.Name -join ', ')"
-} else {
-    Write-Host 'Intel QSV runtime: no redistributable VPL/MFX DLL exists in this OBS deps tree (the OBS build uses its linked dispatcher and the installed Intel media driver).'
+    if ($runtimeDlls.Count) {
+        Write-Host "Bundled $vendor runtime DLLs: $($runtimeDlls.Name -join ', ')"
+    } else {
+        switch ($vendor) {
+            qsv { Write-Warning 'QSV: no VPL/MFX runtime DLL exists in the official OBS rundir/deps; this build relies on its linked dispatcher and the Intel media driver/Driver Store.' }
+            nvenc { Write-Warning 'NVENC: nvEncodeAPI64.dll/nvml.dll are not OBS redistributables; a supported NVIDIA driver must provide them.' }
+            amf { Write-Warning 'AMF: amfrt64.dll is not an OBS redistributable; a supported AMD driver must provide it.' }
+        }
+    }
 }
 Get-ChildItem -LiteralPath $obsPlugins -File | Where-Object Extension -eq '.dll' | Copy-Item -Destination $pluginDestination.FullName
 Copy-Item -LiteralPath $obsData -Destination $obsDestination.FullName -Recurse
@@ -112,8 +134,8 @@ if ($Sign) {
 $readmeTemplate = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'package\README.txt'), [Text.UTF8Encoding]::new($false))
 $readme = $readmeTemplate.Replace('{{VERSION}}', $version.Trim()).Replace('{{FFMPEG_VERSION}}', $ffmpegVersion)
 [IO.File]::WriteAllText((Join-Path $packageRoot 'README.txt'), $readme, [Text.UTF8Encoding]::new($true))
-@{ name='LumaNext'; version=$version.Trim(); architecture='x64'; ffmpeg_version=$ffmpegVersion; ffmpeg_sha256=$ffmpegSha256; built_at=(Get-Date).ToUniversalTime().ToString('o') } |
-    ConvertTo-Json | Set-Content -LiteralPath (Join-Path $packageRoot 'manifest.json') -Encoding UTF8
+@{ name='LumaNext'; version=$version.Trim(); architecture='x64'; ffmpeg_version=$ffmpegVersion; ffmpeg_sha256=$ffmpegSha256; built_at=(Get-Date).ToUniversalTime().ToString('o'); encoder_runtime=@{required_plugins=@('obs-qsv11.dll','obs-nvenc.dll','obs-ffmpeg.dll'); required_helpers=@('obs-qsv-test.exe','obs-nvenc-test.exe','obs-amf-test.exe'); bundled_dlls=$vendorRuntimeDlls} } |
+    ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $packageRoot 'manifest.json') -Encoding UTF8
 
 if (-not $NoZip) {
     $zip = Join-Path $distRoot "LumaNext-$($version.Trim())-win-x64.zip"
