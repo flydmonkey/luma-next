@@ -1,9 +1,9 @@
 use std::{
     ffi::{CStr, CString, c_char, c_void},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     ptr::NonNull,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use serde::Serialize;
@@ -603,7 +603,7 @@ fn validate_recording(
     }
 
     let ffprobe = tools::resolve_ffprobe();
-    let output = Command::new(&ffprobe)
+    let mut child = Command::new(&ffprobe)
         .args([
             "-v",
             "error",
@@ -613,13 +613,40 @@ fn validate_recording(
             "json",
         ])
         .arg(path)
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|error| {
             format!(
                 "ffprobe is required to validate recordings (tried {}): {error}. Use the official Luma Next package or install FFmpeg",
                 ffprobe.display()
             )
         })?;
+    let probe_started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if probe_started.elapsed() < Duration::from_secs(15) => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "ffprobe timed out after 15 seconds while validating {}",
+                    path.display()
+                ));
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("failed while waiting for ffprobe: {error}"));
+            }
+        }
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("failed to collect ffprobe output: {error}"))?;
     if !output.status.success() {
         return Err(format!(
             "ffprobe rejected {}: {}",

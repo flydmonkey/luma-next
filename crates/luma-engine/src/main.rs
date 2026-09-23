@@ -261,13 +261,17 @@ fn run_tray(
         );
         if state_key != last_state {
             let recording = matches!(status.state.as_str(), "recording" | "paused");
-            let action = if recording {
+            let stopping = status.state == "stopping";
+            let action = if stopping {
+                "正在结束…"
+            } else if recording {
                 "停止录制"
             } else {
                 "开始录制"
             };
             let summary = status_summary(&status);
             action_item.set_text(action);
+            action_item.set_enabled(!stopping);
             pause_item.set_enabled(recording);
             pause_item.set_text(if status.state == "paused" {
                 "恢复录制"
@@ -292,6 +296,12 @@ fn run_tray(
                     ),
                 }
             }
+            for _ in 0..150 {
+                if engine.tray_status().state != "stopping" {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(200));
+            }
             let _ = exit_tx.send(true);
             for id in registered_hotkeys.drain(..) {
                 unsafe { UnregisterHotKey(std::ptr::null_mut(), id) };
@@ -303,7 +313,9 @@ fn run_tray(
 }
 
 fn status_summary(status: &luma_engine::TrayStatus) -> String {
-    if matches!(status.state.as_str(), "recording" | "paused") {
+    if status.state == "stopping" {
+        format!("正在结束 · {}", status.target_summary)
+    } else if matches!(status.state.as_str(), "recording" | "paused") {
         format!(
             "{} {:02}:{:02}:{:02} · {} · {}",
             if status.state == "paused" {

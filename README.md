@@ -18,6 +18,7 @@ WebUI (default browser)  --HTTP-->  luma-engine (Rust + system tray)
 - 平台：Windows 优先验收；结构预留跨平台
 - 许可：因链接 libobs，本项目按 **GPL** 约束分发（详见下文）
 - Windows 硬编插件/驱动依赖与诚实探测见 [docs/ENCODERS.md](docs/ENCODERS.md)
+- 停止录制的 `stopping` 状态、超时与控制面可用性见 [docs/STOPPING.md](docs/STOPPING.md)
 
 ## 许可（必读）
 

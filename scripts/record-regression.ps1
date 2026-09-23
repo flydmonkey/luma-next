@@ -30,11 +30,29 @@ function Resolve-Ffprobe {
 $ffprobe = Resolve-Ffprobe
 
 function Invoke-LumaApi([string]$Path, [string]$Method = 'GET', [object]$Body = $null) {
-    $parameters = @{ Uri = "$baseUrl$Path"; Method = $Method; UseBasicParsing = $true }
+    $parameters = @{ Uri = "$baseUrl$Path"; Method = $Method; UseBasicParsing = $true; TimeoutSec = 2 }
     if ($null -ne $Body) { $parameters.ContentType = 'application/json'; $parameters.Body = ($Body | ConvertTo-Json -Compress) }
     $response = Invoke-RestMethod @parameters
     if (-not $response.ok) { throw "Luma API failed: $($response.error)" }
     return $response.data
+}
+
+function Wait-LumaStop([object]$Initial) {
+    $session = $Initial
+    $maxLatencyMs = 0.0
+    foreach ($attempt in 1..150) {
+        if ($session.state -ne 'stopping') { break }
+        Start-Sleep -Milliseconds 200
+        $started = Get-Date
+        $session = Invoke-LumaApi '/api/v1/session'
+        $latency = ((Get-Date) - $started).TotalMilliseconds
+        $maxLatencyMs = [Math]::Max($maxLatencyMs, $latency)
+    }
+    if ($session.state -eq 'stopping') { throw 'Stop did not reach a terminal state within 30 seconds.' }
+    if ($session.state -eq 'failed') { throw "Stop failed: $($session.error)" }
+    if ($session.state -ne 'idle') { throw "Unexpected state after stop: $($session.state)" }
+    Write-Host ("[stop-control] session remained responsive; max poll latency {0:N0}ms" -f $maxLatencyMs)
+    return $session
 }
 
 function Invoke-RecordingCase([string]$EncoderId, [string]$Label, [bool]$Hardware, [string]$Mode = 'display', [string]$WindowId = '', [bool]$SystemAudio = $true, [bool]$Microphone = $false, [string]$DisplayId = 'primary', [hashtable]$Region = $null, [int]$PauseSeconds = 0, [string]$GameId = '') {
@@ -64,7 +82,7 @@ function Invoke-RecordingCase([string]$EncoderId, [string]$Label, [bool]$Hardwar
     }
     Write-Progress -Activity "Luma $Label regression" -Completed
     $live = Invoke-LumaApi '/api/v1/session'
-    $stop = Invoke-LumaApi '/api/v1/session/stop' 'POST'
+    $stop = Wait-LumaStop (Invoke-LumaApi '/api/v1/session/stop' 'POST')
     $script:recording = $false
     $wallSeconds = ((Get-Date)-$startedAt).TotalSeconds
     $outputPath = $stop.output_path

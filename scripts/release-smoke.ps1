@@ -22,6 +22,13 @@ try {
     if(-not $start.ok){throw $start.error};Start-Sleep -Seconds $Seconds
     $stop=Invoke-RestMethod "$base/api/v1/session/stop" -Method Post
     if(-not $stop.ok){throw $stop.error}
+    foreach($attempt in 1..150){
+        if($stop.data.state -ne 'stopping'){break}
+        Start-Sleep -Milliseconds 200
+        $stop=Invoke-RestMethod "$base/api/v1/session" -TimeoutSec 2
+        if(-not $stop.ok){throw $stop.error}
+    }
+    if($stop.data.state -ne 'idle'){throw "recording stop did not complete: state=$($stop.data.state) error=$($stop.data.error)"}
     if(-not (Test-Path -LiteralPath $stop.data.output_path)){throw 'smoke recording is missing'}
     Write-Host "[release-smoke] PASS: $($stop.data.output_path); Run=$run" -ForegroundColor Green
 } finally {

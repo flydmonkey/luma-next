@@ -117,6 +117,7 @@ struct Controller {
     recorder: Option<ObsRecorder>,
     session: Session,
     settings: SettingsStore,
+    stop_generation: u64,
 }
 type AppState = Arc<Mutex<Controller>>;
 
@@ -173,9 +174,16 @@ impl Engine {
     }
 
     pub fn stop(&self) -> Result<TrayStatus, String> {
-        let mut controller = self.state.lock().expect("controller mutex poisoned");
-        stop_locked(&mut controller)
-            .map(|_| self.tray_status_from_locked(&controller))
+        begin_stop(&self.state)
+            .map(|session| TrayStatus {
+                state: session.state.into(),
+                elapsed_seconds: session.elapsed_seconds,
+                output_path: session.output_path,
+                error: session.error,
+                encoder_active: session.encoder_active,
+                capture_mode: session.capture_mode,
+                target_summary: session.target_summary,
+            })
             .map_err(|(_, error)| error)
     }
 
@@ -226,6 +234,7 @@ fn controller(
         recorder,
         session: Session::default(),
         settings,
+        stop_generation: 0,
     }
 }
 
@@ -492,8 +501,14 @@ fn start_locked(
     controller: &mut Controller,
     request: StartRequest,
 ) -> Result<Session, (StatusCode, String)> {
-    if matches!(controller.session.state, "recording" | "paused") {
-        return Err((StatusCode::CONFLICT, "recording is already active".into()));
+    if matches!(
+        controller.session.state,
+        "recording" | "paused" | "stopping"
+    ) {
+        return Err((
+            StatusCode::CONFLICT,
+            "recording is active or stopping".into(),
+        ));
     }
     let configured = controller.settings.current().clone();
     let mode = request.mode.as_deref().unwrap_or(&configured.capture_mode);
@@ -744,41 +759,88 @@ fn start_locked(
 }
 
 async fn stop_recording(State(state): State<AppState>) -> Response {
-    let mut controller = state.lock().expect("controller mutex poisoned");
-    match stop_locked(&mut controller) {
+    match begin_stop(&state) {
         Ok(session) => success_response(session),
         Err((status, error)) => error_response(status, error),
     }
 }
 
-fn stop_locked(controller: &mut Controller) -> Result<Session, (StatusCode, String)> {
-    if !matches!(controller.session.state, "recording" | "paused") {
-        return Err((StatusCode::CONFLICT, "no recording is active".into()));
-    }
-    let Some(recorder) = controller.recorder.as_mut() else {
-        return Err((
-            StatusCode::SERVICE_UNAVAILABLE,
-            "libobs recorder is not initialized".into(),
-        ));
+fn begin_stop(state: &AppState) -> Result<Session, (StatusCode, String)> {
+    let (mut recorder, generation, stopping) = {
+        let mut controller = state.lock().expect("controller mutex poisoned");
+        if !matches!(controller.session.state, "recording" | "paused") {
+            return Err((StatusCode::CONFLICT, "no recording is active".into()));
+        }
+        let Some(recorder) = controller.recorder.take() else {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                "libobs recorder is not initialized".into(),
+            ));
+        };
+        let (media, wall) = recorder.elapsed();
+        apply_elapsed(&mut controller.session, media, wall);
+        controller.session.state = "stopping";
+        controller.session.paused = false;
+        controller.session.warning = Some("正在结束 OBS 输出并校验文件…".into());
+        controller.session.error = None;
+        controller.stop_generation = controller.stop_generation.wrapping_add(1);
+        (
+            recorder,
+            controller.stop_generation,
+            controller.session.snapshot(),
+        )
     };
-    match recorder.stop() {
-        Ok((path, validation)) => {
-            controller.session.state = "idle";
-            controller.session.elapsed_seconds = validation.duration_seconds;
-            controller.session.media_elapsed_seconds = validation.media_seconds;
-            controller.session.wall_elapsed_seconds = validation.wall_seconds;
-            controller.session.paused = false;
-            controller.session.output_path = Some(path.to_string_lossy().into_owned());
-            controller.session.validation = Some(validation);
-            controller.session.error = None;
-            Ok(session_snapshot(controller))
+
+    let completion_state = state.clone();
+    std::thread::spawn(move || {
+        let started = std::time::Instant::now();
+        eprintln!("recording stop worker: OBS stop started");
+        let result = recorder.stop();
+        eprintln!(
+            "recording stop worker: OBS stop and validation finished in {:.3}s",
+            started.elapsed().as_secs_f64()
+        );
+        let mut controller = completion_state.lock().expect("controller mutex poisoned");
+        if controller.stop_generation != generation {
+            eprintln!("recording stop worker: stale completion ignored");
+            return;
         }
-        Err(error) => {
+        controller.recorder = Some(recorder);
+        match result {
+            Ok((path, validation)) => {
+                controller.session.state = "idle";
+                controller.session.elapsed_seconds = validation.duration_seconds;
+                controller.session.media_elapsed_seconds = validation.media_seconds;
+                controller.session.wall_elapsed_seconds = validation.wall_seconds;
+                controller.session.output_path = Some(path.to_string_lossy().into_owned());
+                controller.session.validation = Some(validation);
+                controller.session.error = None;
+                controller.session.warning = None;
+            }
+            Err(error) => {
+                controller.session.state = "failed";
+                controller.session.error = Some(error);
+                controller.session.warning = None;
+            }
+        }
+    });
+
+    let watchdog_state = state.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(30));
+        let mut controller = watchdog_state.lock().expect("controller mutex poisoned");
+        if controller.stop_generation == generation && controller.session.state == "stopping" {
             controller.session.state = "failed";
-            controller.session.error = Some(error.clone());
-            Err((StatusCode::INTERNAL_SERVER_ERROR, error))
+            controller.session.error = Some(
+                "录制停止超过 30 秒；控制面仍可用，但 OBS/驱动停止线程未返回，请重启 Luma 后再录制"
+                    .into(),
+            );
+            controller.session.warning = None;
+            eprintln!("recording stop watchdog: marked session failed after 30s");
         }
-    }
+    });
+
+    Ok(stopping)
 }
 
 async fn pause_recording(State(state): State<AppState>) -> Response {
@@ -910,7 +972,10 @@ async fn put_settings(
     Json(mut settings): Json<Settings>,
 ) -> Response {
     let mut controller = state.lock().expect("controller mutex poisoned");
-    if controller.session.state == "recording" {
+    if matches!(
+        controller.session.state,
+        "recording" | "paused" | "stopping"
+    ) {
         return error_response(
             StatusCode::CONFLICT,
             "settings cannot change while recording",
@@ -1126,6 +1191,30 @@ mod tests {
         assert_eq!(session.elapsed_seconds, 1219.3);
         assert_eq!(session.media_elapsed_seconds, 1219.3);
         assert_eq!(session.wall_elapsed_seconds, 1206.0);
+    }
+
+    #[test]
+    fn stopping_session_keeps_the_last_media_snapshot() {
+        let controller = Controller {
+            recorder: None,
+            session: Session {
+                state: "stopping",
+                elapsed_seconds: 30.5,
+                media_elapsed_seconds: 30.5,
+                wall_elapsed_seconds: 30.7,
+                ..Session::default()
+            },
+            settings: SettingsStore::load(
+                tempfile::tempdir().unwrap().path().join("settings.json"),
+                std::env::temp_dir(),
+            )
+            .unwrap(),
+            stop_generation: 1,
+        };
+        let snapshot = session_snapshot(&controller);
+        assert_eq!(snapshot.state, "stopping");
+        assert_eq!(snapshot.elapsed_seconds, 30.5);
+        assert_eq!(snapshot.wall_elapsed_seconds, 30.7);
     }
 
     #[test]
